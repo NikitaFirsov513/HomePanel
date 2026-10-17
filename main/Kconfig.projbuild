@@ -1,0 +1,70 @@
+menu "Home Panel"
+    config HOME_PANEL_YANDEX_TOKEN
+        string "Yandex Smart Home OAuth token"
+        default ""
+        help
+            Configure locally using menuconfig. Never commit this value.
+            The token is embedded in firmware; protect firmware and build files.
+
+    config HOME_PANEL_REFRESH_SECONDS
+        int "Device list refresh interval (seconds)"
+        range 10 3600
+        default 60
+
+    config HOME_PANEL_RETRY_SECONDS
+        int "Retry delay after a request error (seconds)"
+        range 1 300
+        default 10
+endmenu
+
+menu "Ethernet Configuration"
+
+    config EXAMPLE_USE_INTERNAL_ETHERNET
+        bool "Use Internal Ethernet"
+        default y
+
+    choice EXAMPLE_ETH_PHY
+        prompt "Ethernet PHY Device"
+        depends on EXAMPLE_USE_INTERNAL_ETHERNET
+        default EXAMPLE_ETH_PHY_IP101
+
+        config EXAMPLE_ETH_PHY_IP101
+            bool "IP101/IP101GR"
+
+        config EXAMPLE_ETH_PHY_LAN87XX
+            bool "LAN87xx"
+
+        config EXAMPLE_ETH_PHY_RTL8201
+            bool "RTL8201"
+
+        config EXAMPLE_ETH_PHY_DP83848
+            bool "DP83848"
+
+    endchoice
+
+    config EXAMPLE_ETH_MDC_GPIO
+        int "SMI MDC GPIO number"
+        depends on EXAMPLE_USE_INTERNAL_ETHERNET
+        default 31
+
+    config EXAMPLE_ETH_MDIO_GPIO
+        int "SMI MDIO GPIO number"
+        depends on EXAMPLE_USE_INTERNAL_ETHERNET
+        default 52
+
+    config EXAMPLE_ETH_PHY_ADDR
+        int "PHY Address"
+        depends on EXAMPLE_USE_INTERNAL_ETHERNET
+        range -1 31
+        default 1
+
+    config EXAMPLE_ETH_PHY_RST_GPIO
+        int "PHY Reset GPIO number"
+        depends on EXAMPLE_USE_INTERNAL_ETHERNET
+        default 51
+
+    config EXAMPLE_USE_SPI_ETHERNET
+        bool "Use SPI Ethernet"
+        default n
+
+endmenu
