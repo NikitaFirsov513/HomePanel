@@ -1,5 +1,6 @@
 #include "LoadingPage.hpp"
 #include "lvgl.h"
+extern "C" { LV_FONT_DECLARE(font_roboto_20); }
 
 
 void LoadingPage::create()
@@ -14,6 +15,7 @@ void LoadingPage::create()
      */
     root_ =
         lv_obj_create(nullptr);
+    lv_obj_set_style_text_font(root_, &font_roboto_20, 0);
 
 
     /*

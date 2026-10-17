@@ -1,10 +1,12 @@
 #include <cstdio>
 #include <cstdlib>
 #include <memory>
+#include <cstring>
 #include "sdkconfig.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/event_groups.h"
 #include "freertos/task.h"
+#include "freertos/queue.h"
 #include "esp_event.h"
 #include "esp_eth.h"
 #include "esp_log.h"
@@ -14,16 +16,24 @@
 #include "HttpsClient.hpp"
 #include "UiManager.hpp"
 #include "DeviceManager.hpp"
+#include "DeviceAction.hpp"
 
 static constexpr EventBits_t ETH_GOT_IP_BIT = BIT0;
 static const char *TAG = "MAIN";
 static EventGroupHandle_t eth_event_group;
+static QueueHandle_t action_queue;
 static UiManager ui_manager;
 static DeviceManager device_manager;
 
 static bool network_ready()
 {
     return (xEventGroupGetBits(eth_event_group) & ETH_GOT_IP_BIT) != 0;
+}
+
+static bool enqueue_action(const DeviceAction &action)
+{
+    // Called by LVGL: no HTTP, waiting, or model mutexes on the display thread.
+    return action_queue && xQueueSend(action_queue, &action, 0) == pdTRUE;
 }
 
 static void eth_event_handler(void *, esp_event_base_t, int32_t event_id, void *)
@@ -44,84 +54,135 @@ static void ip_event_handler(void *, esp_event_base_t, int32_t event_id, void *)
     }
 }
 
-// Notice disconnects without waiting out the whole refresh interval.
-static void wait_connected(unsigned seconds)
+static std::string request_error(esp_err_t error, int status, bool control)
 {
-    for (unsigned i = 0; i < seconds && network_ready(); ++i)
-        vTaskDelay(pdMS_TO_TICKS(1000));
+    if (!network_ready()) return "Нет сети. Проверьте Ethernet.";
+    if (status == 401) return "HTTP 401: токен Яндекса недействителен";
+    if (status == 403) return control ? "HTTP 403: токену нужно разрешение iot:control" :
+                                                     "HTTP 403: токену нужно разрешение iot:view";
+    char text[100];
+    snprintf(text, sizeof(text), "Ошибка запроса: %s, HTTP %d", esp_err_to_name(error), status);
+    return text;
+}
+
+static bool refresh_devices(std::string &message)
+{
+    HttpsClient https("https://api.iot.yandex.net");
+    HttpsReq_t req{};
+    req.path = "/v1.0/user/info";
+    req.token = CONFIG_HOME_PANEL_YANDEX_TOKEN;
+    const auto res = https.send(req);
+    if (!res.ok()) {
+        message = request_error(res.transport_error, res.http_status, false);
+        return false;
+    }
+    std::unique_ptr<cJSON, decltype(&cJSON_Delete)> root(
+        cJSON_ParseWithLength(res.body, res.body_len), &cJSON_Delete);
+    const auto *status = cJSON_GetObjectItemCaseSensitive(root.get(), "status");
+    if (!cJSON_IsString(status) || strcmp(status->valuestring, "ok")) {
+        message = "Некорректный ответ списка устройств";
+        return false;
+    }
+    const auto error = device_manager.createDevicesFromJson(root.get());
+    if (error != ESP_OK) {
+        message = request_error(error, res.http_status, false);
+        return false;
+    }
+    return true;
+}
+
+static bool send_action(const DeviceAction &action, std::string &message)
+{
+    auto device = device_manager.getDeviceById(action.device_id);
+    if (!device) { message = "Устройство больше не найдено. Обновите список."; return false; }
+    std::string body;
+    const auto error = buildDeviceAction(*device, action, body);
+    if (error != ESP_OK) { message = "Команда недоступна для этого устройства"; return false; }
+    HttpsClient https("https://api.iot.yandex.net");
+    HttpsReq_t req{};
+    req.method = HTTP_METHOD_POST;
+    req.path = "/v1.0/devices/actions";
+    req.token = CONFIG_HOME_PANEL_YANDEX_TOKEN;
+    req.body = body.c_str();
+    const auto res = https.send(req);
+    if (!res.ok()) {
+        message = request_error(res.transport_error, res.http_status, true);
+        return false;
+    }
+    std::unique_ptr<cJSON, decltype(&cJSON_Delete)> root(
+        cJSON_ParseWithLength(res.body, res.body_len), &cJSON_Delete);
+    return deviceActionSucceeded(root.get(), action, message);
 }
 
 static void device_sync_task(void *)
 {
     if (CONFIG_HOME_PANEL_YANDEX_TOKEN[0] == '\0') {
         ESP_LOGE(TAG, "Set the Yandex token in menuconfig > Home Panel");
-        ui_manager.setErrorPage("Yandex token is missing.\nSet it in menuconfig > Home Panel,\nthen rebuild and flash the firmware.");
+        ui_manager.setErrorPage("Yandex token is missing. Set it in menuconfig > Home Panel.");
         vTaskDelete(nullptr);
         return;
     }
-    bool show_progress = true;
+    bool home_shown = false;
+    unsigned delay_seconds = 0;
     while (true) {
+        DeviceAction action{};
+        bool received = false;
+        for (unsigned second = 0; second < delay_seconds && network_ready(); ++second) {
+            if (xQueueReceive(action_queue, &action, pdMS_TO_TICKS(1000)) == pdTRUE) {
+                received = true;
+                break;
+            }
+        }
+        // Also consume commands arriving during a refresh or a disconnect.
+        if (!received) received = xQueueReceive(action_queue, &action, 0) == pdTRUE;
         if (!network_ready()) {
-            ui_manager.setLoadPage("Waiting for Ethernet IP...");
-            EventBits_t bits = xEventGroupWaitBits(eth_event_group, ETH_GOT_IP_BIT,
-                                                  pdFALSE, pdTRUE, pdMS_TO_TICKS(15000));
-            if (!(bits & ETH_GOT_IP_BIT)) {
-                ui_manager.setErrorPage("No network. Check Ethernet cable / DHCP. Retrying...");
-                vTaskDelay(pdMS_TO_TICKS(1000));
-                continue;
-            }
+            if (home_shown) ui_manager.setControlResult(&device_manager, "Нет сети. Ожидание Ethernet...", true, received);
+            else ui_manager.setLoadPage("Waiting for Ethernet IP...");
+            xEventGroupWaitBits(eth_event_group, ETH_GOT_IP_BIT, pdFALSE, pdTRUE, pdMS_TO_TICKS(1000));
+            delay_seconds = 0;
+            continue;
         }
-        esp_err_t error = ESP_OK;
-        int http_status = 0;
-        if (show_progress) ui_manager.setLoadPage("Loading devices...");
-        {
-            // A new client also recovers from failed TLS connections.
-            HttpsClient https("https://api.iot.yandex.net");
-            HttpsReq_t req{};
-            req.method = HTTP_METHOD_GET;
-            req.path = "/v1.0/user/info";
-            req.token = CONFIG_HOME_PANEL_YANDEX_TOKEN;
-            HttpsRes_t res = https.send(req);
-            http_status = res.http_status;
-            error = res.transport_error;
-            if (res.ok()) {
-                std::unique_ptr<cJSON, decltype(&cJSON_Delete)> root(
-                    cJSON_ParseWithLength(res.body, res.body_len), &cJSON_Delete);
-                error = device_manager.createDevicesFromJson(root.get());
-            } else if (error == ESP_OK) {
-                error = ESP_FAIL;
-            }
+        std::string action_message;
+        bool action_ok = true;
+        if (received && action.kind != ActionValue::Refresh) {
+            // Never automatically retry an action: vacuum commands and relative
+            // changes may have already executed even if the response was lost.
+            action_ok = send_action(action, action_message);
+            ESP_LOGI(TAG, "Device action: %s", action_ok ? "DONE" : "ERROR");
         }
-        if (error == ESP_OK && network_ready()) {
-            error = ui_manager.setHomePage(&device_manager);
-            if (error == ESP_OK) {
-                show_progress = false;
-                ESP_LOGI(TAG, "Device list updated");
-                wait_connected(CONFIG_HOME_PANEL_REFRESH_SECONDS);
-                continue;
+        if (!home_shown) ui_manager.setLoadPage("Loading devices...");
+        std::string refresh_message;
+        const bool refreshed = refresh_devices(refresh_message);
+        if (refreshed) {
+            if (received) {
+                const auto message = action.kind == ActionValue::Refresh ? "Состояния обновлены" : action_message;
+                ui_manager.setControlResult(&device_manager, message.c_str(), !action_ok);
+            } else if (!home_shown) ui_manager.setHomePage(&device_manager);
+            else {
+                ui_manager.setControlResult(&device_manager, "Состояния обновлены", false, false);
             }
-        }
-        char message[128];
-        if (!network_ready()) {
-            snprintf(message, sizeof(message), "Network lost. Reconnecting...");
-        } else if (http_status == 401) {
-            snprintf(message, sizeof(message), "HTTP 401: invalid Yandex token. Use access_token, not ClientID.");
-        } else if (http_status == 403) {
-            snprintf(message, sizeof(message), "HTTP 403: access denied. Check the token's iot:view permission.");
+            home_shown = true;
+            delay_seconds = CONFIG_HOME_PANEL_REFRESH_SECONDS;
+            ESP_LOGI(TAG, "Device list updated");
         } else {
-            snprintf(message, sizeof(message), "Update failed: %s, HTTP %d. Retrying...",
-                     esp_err_to_name(error), http_status);
+            std::string message = refresh_message;
+            if (received && action.kind != ActionValue::Refresh) {
+                message = action_message + ". Состояние не обновлено: " + refresh_message;
+            }
+            if (home_shown) ui_manager.setControlResult(&device_manager, message.c_str(), true, received);
+            else ui_manager.setErrorPage(message.c_str());
+            delay_seconds = CONFIG_HOME_PANEL_RETRY_SECONDS;
+            ESP_LOGW(TAG, "Device update failed");
         }
-        ESP_LOGW(TAG, "%s", message);
-        show_progress = true;
-        ui_manager.setErrorPage(message);
-        wait_connected(CONFIG_HOME_PANEL_RETRY_SECONDS);
     }
 }
 
 extern "C" void app_main()
 {
     ESP_LOGI(TAG, "Application starting");
+    action_queue = xQueueCreate(1, sizeof(DeviceAction));
+    ESP_ERROR_CHECK(action_queue ? ESP_OK : ESP_ERR_NO_MEM);
+    ui_manager.setActionHandler(enqueue_action);
     ESP_ERROR_CHECK(ui_manager.init());
     eth_event_group = xEventGroupCreate();
     ESP_ERROR_CHECK(eth_event_group ? ESP_OK : ESP_ERR_NO_MEM);
@@ -144,7 +205,6 @@ extern "C" void app_main()
     ESP_ERROR_CHECK(esp_event_handler_register(IP_EVENT, IP_EVENT_ETH_LOST_IP,
                                              ip_event_handler, nullptr));
     ESP_ERROR_CHECK(esp_eth_start(handles[0]));
-    // Only free the array; driver ownership remains with the network interface.
     free(handles);
     ESP_ERROR_CHECK(xTaskCreate(device_sync_task, "device_sync", 16 * 1024, nullptr,
                                 5, nullptr) == pdPASS ? ESP_OK : ESP_ERR_NO_MEM);

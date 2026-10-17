@@ -1,4 +1,6 @@
 #include "DeviceManager.hpp"
+#include "DeviceAction.hpp"
+#include <cstring>
 #include <cstdio>
 #include <cstdlib>
 #include <memory>
@@ -16,6 +18,70 @@ static esp_err_t load(DeviceManager &manager, const char *json)
 
 int main()
 {
+    {
+        DeviceManager manager;
+        CHECK(load(manager, R"({"rooms":[{"id":"r","name":"Kitchen"}],"devices":[{"id":"lamp","name":"Light","type":"devices.types.light","room":"r","capabilities":[
+          {"type":"devices.capabilities.on_off","state":{"instance":"on","value":false}},
+          {"type":"devices.capabilities.range","parameters":{"instance":"brightness","range":{"min":1,"max":100,"precision":1}},"state":{"instance":"brightness","value":45}},
+          {"type":"devices.capabilities.color_setting","parameters":{"color_model":"rgb","temperature_k":{"min":2700,"max":6500},"color_scene":{"scenes":[{"id":"reading"}]}},"state":{"instance":"temperature_k","value":3200}},
+          {"type":"devices.capabilities.mode","parameters":{"instance":"work_speed","modes":[{"value":"quiet"},{"value":"turbo"}]},"state":{"instance":"work_speed","value":"quiet"}},
+          {"type":"devices.capabilities.toggle","parameters":{"instance":"pause"},"state":null},
+          {"type":"devices.capabilities.range","parameters":{"instance":"volume","random_access":false,"range":{"min":0,"max":100,"precision":0.5}}},
+          {"type":"devices.capabilities.range","parameters":{"instance":"invalid","range":{"min":0,"max":100,"precision":0}}}
+        ],"properties":[{"state":{"instance":"battery_level","value":80}}]}]})") == ESP_OK);
+        const auto device = manager.getDeviceById("lamp");
+        CHECK(device && device->room == "Kitchen" && device->controls.size() == 8);
+        CHECK(device->controls[0].known && !device->controls[0].boolean);
+        CHECK(device->controls[1].number == 45 && device->controls[1].maximum == 100);
+        CHECK(device->controls[3].instance == "temperature_k" && device->controls[3].number == 3200);
+        CHECK(!device->controls[6].known && device->controls[7].relative_only);
+        CHECK(device->readings.size() == 1);
+        DeviceAction action{};
+        strcpy(action.device_id, "lamp");
+        strcpy(action.type, "devices.capabilities.on_off");
+        strcpy(action.instance, "on");
+        action.boolean = true;
+        std::string body;
+        CHECK(buildDeviceAction(*device, action, body) == ESP_OK);
+        std::unique_ptr<cJSON, decltype(&cJSON_Delete)> json(cJSON_Parse(body.c_str()), &cJSON_Delete);
+        auto *dev = cJSON_GetArrayItem(cJSON_GetObjectItemCaseSensitive(json.get(), "devices"), 0);
+        auto *cap = cJSON_GetArrayItem(cJSON_GetObjectItemCaseSensitive(dev, "actions"), 0);
+        auto *state = cJSON_GetObjectItemCaseSensitive(cap, "state");
+        CHECK(cJSON_IsTrue(cJSON_GetObjectItemCaseSensitive(state, "value")));
+        CHECK(!cJSON_GetObjectItemCaseSensitive(state, "relative"));
+        auto result = [&](const char *response) {
+            std::unique_ptr<cJSON, decltype(&cJSON_Delete)> root(cJSON_Parse(response), &cJSON_Delete);
+            std::string message;
+            return deviceActionSucceeded(root.get(), action, message);
+        };
+        CHECK(result(R"({"status":"ok","devices":[{"id":"lamp","capabilities":[{"type":"devices.capabilities.on_off","state":{"instance":"on","action_result":{"status":"DONE"}}}]}]})"));
+        CHECK(!result(R"({"status":"ok","devices":[{"id":"lamp","capabilities":[{"type":"devices.capabilities.on_off","state":{"instance":"on","action_result":{"status":"ERROR","error_code":"DEVICE_UNREACHABLE"}}}]}]})"));
+        CHECK(!result(R"({"status":"ok","devices":[{"id":"other","capabilities":[{"type":"devices.capabilities.on_off","state":{"instance":"on","action_result":{"status":"DONE"}}}]}]})"));
+        CHECK(!result(R"({"status":"ok","devices":[]})"));
+        CHECK(!result("null"));
+        strcpy(action.type, "devices.capabilities.range");
+        strcpy(action.instance, "brightness");
+        action.kind = ActionValue::Number;
+        action.number = 101;
+        CHECK(buildDeviceAction(*device, action, body) == ESP_ERR_INVALID_ARG);
+        action.number = 75;
+        CHECK(buildDeviceAction(*device, action, body) == ESP_OK);
+        action.relative = true;
+        CHECK(buildDeviceAction(*device, action, body) == ESP_ERR_INVALID_ARG);
+        strcpy(action.instance, "volume"); action.number = -0.5;
+        CHECK(buildDeviceAction(*device, action, body) == ESP_OK);
+        CHECK(body.find("\"relative\":true") != std::string::npos);
+        action.relative = false;
+        CHECK(buildDeviceAction(*device, action, body) == ESP_ERR_INVALID_ARG);
+        strcpy(action.type, "devices.capabilities.mode");
+        strcpy(action.instance, "work_speed"); action.kind = ActionValue::String;
+        strcpy(action.text, "turbo");
+        CHECK(buildDeviceAction(*device, action, body) == ESP_OK);
+        strcpy(action.text, "nonexistent");
+        CHECK(buildDeviceAction(*device, action, body) == ESP_ERR_INVALID_ARG);
+        strcpy(action.instance, "unsupported");
+        CHECK(buildDeviceAction(*device, action, body) == ESP_ERR_NOT_SUPPORTED);
+    }
     static_assert(!std::is_copy_constructible<DeviceManager>::value);
     {
         DeviceManager manager;

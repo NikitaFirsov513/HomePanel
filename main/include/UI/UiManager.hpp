@@ -13,21 +13,24 @@
 
 #define UI_QUEUE_LENGTH 10
 
-LV_FONT_DECLARE(font_roboto_20);
+extern "C" { LV_FONT_DECLARE(font_roboto_20); }
 
 enum class UiMessageType : uint8_t
 {
     SET_LOAD_PAGE,
     SET_ERROR_PAGE,
     SET_HOME_PAGE,
+    CONTROL_RESULT,
 };
 
 struct UiMessage
 {
     UiMessageType type;
 
-    char text[128]{};
+    char text[512]{};
     DeviceManager *device_manager = nullptr;
+    bool error = false;
+    bool finished = true;
 };
 static_assert(std::is_trivially_copyable<UiMessage>::value,
               "FreeRTOS queues require trivially copyable messages");
@@ -46,6 +49,8 @@ public:
     esp_err_t setLoadPage(const char *text = "Loading...");
     esp_err_t setErrorPage(const char *text);
     esp_err_t setHomePage(DeviceManager *device_manager);
+    void setActionHandler(HomePage::ActionHandler handler) { home_page_.setActionHandler(handler); }
+    esp_err_t setControlResult(DeviceManager *devices, const char *text, bool error, bool finished = true);
 
 private:
     QueueHandle_t ui_queue_ = nullptr;

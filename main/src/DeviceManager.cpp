@@ -1,8 +1,113 @@
 #include "DeviceManager.hpp"
 #include <algorithm>
 #include <utility>
+#include <cmath>
+#include <cstdio>
 
 namespace {
+std::string str(const cJSON *object, const char *key)
+{
+    const auto *value = cJSON_GetObjectItemCaseSensitive(object, key);
+    return cJSON_IsString(value) && value->valuestring ? value->valuestring : "";
+}
+
+void parseControls(Device &device, const cJSON *item)
+{
+    const cJSON *cap = nullptr;
+    cJSON_ArrayForEach(cap, cJSON_GetObjectItemCaseSensitive(item, "capabilities")) {
+        DeviceControl c;
+        c.type = str(cap, "type");
+        const auto *p = cJSON_GetObjectItemCaseSensitive(cap, "parameters");
+        const auto *state = cJSON_GetObjectItemCaseSensitive(cap, "state");
+        const auto *value = cJSON_GetObjectItemCaseSensitive(state, "value");
+        c.instance = str(p, "instance");
+        const auto state_instance = str(state, "instance");
+        if (c.type == "devices.capabilities.on_off" || c.type == "devices.capabilities.toggle") {
+            if (c.type == "devices.capabilities.on_off") c.instance = "on";
+            if (c.instance.empty()) continue;
+            c.kind = ControlKind::Toggle;
+            c.known = state_instance == c.instance && cJSON_IsBool(value);
+            c.boolean = cJSON_IsTrue(value);
+            device.controls.push_back(c);
+        } else if (c.type == "devices.capabilities.range") {
+            c.kind = ControlKind::Range;
+            if (c.instance.empty()) continue;
+            c.relative_only = cJSON_IsFalse(cJSON_GetObjectItemCaseSensitive(p, "random_access"));
+            const auto *range = cJSON_GetObjectItemCaseSensitive(p, "range");
+            const auto *min = cJSON_GetObjectItemCaseSensitive(range, "min");
+            const auto *max = cJSON_GetObjectItemCaseSensitive(range, "max");
+            const auto *step = cJSON_GetObjectItemCaseSensitive(range, "precision");
+            if (!cJSON_IsNumber(min) || !cJSON_IsNumber(max)) continue;
+            c.minimum = min->valuedouble;
+            c.maximum = max->valuedouble;
+            c.step = cJSON_IsNumber(step) ? step->valuedouble : 1;
+            if (!std::isfinite(c.minimum) || !std::isfinite(c.maximum) ||
+                !std::isfinite(c.step) || c.step <= 0 || c.maximum <= c.minimum ||
+                (c.maximum - c.minimum) / c.step > 10000) continue;
+            c.known = state_instance == c.instance && cJSON_IsNumber(value) &&
+                      std::isfinite(value->valuedouble) && value->valuedouble >= c.minimum && value->valuedouble <= c.maximum;
+            c.number = c.known ? value->valuedouble : c.minimum;
+            device.controls.push_back(c);
+        } else if (c.type == "devices.capabilities.mode") {
+            c.kind = ControlKind::Mode;
+            if (c.instance.empty()) continue;
+            const cJSON *mode = nullptr;
+            cJSON_ArrayForEach(mode, cJSON_GetObjectItemCaseSensitive(p, "modes")) {
+                const auto name = str(mode, "value");
+                if (!name.empty()) c.options.push_back({name});
+            }
+            c.text = state_instance == c.instance ? str(state, "value") : "";
+            c.known = !c.text.empty();
+            if (!c.options.empty()) device.controls.push_back(c);
+        } else if (c.type == "devices.capabilities.color_setting") {
+            const auto model = str(p, "color_model");
+            if (model == "rgb" || model == "hsv") {
+                c.kind = model == "rgb" ? ControlKind::Rgb : ControlKind::Hsv;
+                c.instance = model;
+                c.maximum = 16777215;
+                c.known = state_instance == model && (cJSON_IsNumber(value) || cJSON_IsObject(value));
+                c.number = cJSON_IsNumber(value) ? value->valuedouble : 0;
+                device.controls.push_back(c);
+            }
+            const auto *temp = cJSON_GetObjectItemCaseSensitive(p, "temperature_k");
+            const auto *min = cJSON_GetObjectItemCaseSensitive(temp, "min");
+            const auto *max = cJSON_GetObjectItemCaseSensitive(temp, "max");
+            if (cJSON_IsNumber(min) && cJSON_IsNumber(max) && min->valuedouble >= 100 &&
+                max->valuedouble <= 20000 && max->valuedouble > min->valuedouble) {
+                DeviceControl t;
+                t.type = c.type; t.instance = "temperature_k"; t.kind = ControlKind::Range;
+                t.minimum = min->valuedouble; t.maximum = max->valuedouble; t.step = 1;
+                t.known = state_instance == t.instance && cJSON_IsNumber(value) &&
+                          value->valuedouble >= t.minimum && value->valuedouble <= t.maximum;
+                t.number = t.known ? value->valuedouble : t.minimum;
+                device.controls.push_back(t);
+            }
+            const auto *scene = cJSON_GetObjectItemCaseSensitive(p, "color_scene");
+            DeviceControl s;
+            s.type = c.type; s.instance = "scene"; s.kind = ControlKind::Mode;
+            const cJSON *entry = nullptr;
+            cJSON_ArrayForEach(entry, cJSON_GetObjectItemCaseSensitive(scene, "scenes")) {
+                const auto id = str(entry, "id");
+                if (!id.empty()) s.options.push_back({id});
+            }
+            s.text = state_instance == "scene" ? str(state, "value") : "";
+            s.known = !s.text.empty();
+            if (!s.options.empty()) device.controls.push_back(s);
+        }
+    }
+    const cJSON *prop = nullptr;
+    cJSON_ArrayForEach(prop, cJSON_GetObjectItemCaseSensitive(item, "properties")) {
+        const auto *state = cJSON_GetObjectItemCaseSensitive(prop, "state");
+        const auto *value = cJSON_GetObjectItemCaseSensitive(state, "value");
+        const auto instance = str(state, "instance");
+        if (instance.empty()) continue;
+        if (cJSON_IsNumber(value)) {
+            char number[48]; snprintf(number, sizeof(number), "%g", value->valuedouble);
+            device.readings.push_back(instance + ": " + number);
+        } else if (cJSON_IsString(value)) device.readings.push_back(instance + ": " + value->valuestring);
+    }
+}
+
 class DeviceLock {
 public:
     explicit DeviceLock(SemaphoreHandle_t mutex) : mutex_(mutex) {
@@ -47,6 +152,11 @@ esp_err_t DeviceManager::createDevicesFromJson(cJSON *root)
         device.id = id->valuestring;
         device.name = name->valuestring;
         device.type = type->valuestring;
+        const auto room_id = str(item, "room");
+        const cJSON *room = nullptr;
+        cJSON_ArrayForEach(room, cJSON_GetObjectItemCaseSensitive(root, "rooms"))
+            if (str(room, "id") == room_id && !room_id.empty()) device.room = str(room, "name");
+        parseControls(device, item);
         parsed.push_back(std::move(device));
     }
     if (!mutex_home_devices) return ESP_ERR_NO_MEM;

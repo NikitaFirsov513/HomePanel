@@ -56,10 +56,12 @@ void UiManager::ui_process_message(const UiMessage &msg)
 {
     // Snapshot before locking LVGL, so model contention cannot freeze rendering.
     std::vector<Device> devices;
-    if (msg.type == UiMessageType::SET_HOME_PAGE) {
+    bool snapshot_available = true;
+    if (msg.type == UiMessageType::SET_HOME_PAGE || msg.type == UiMessageType::CONTROL_RESULT) {
         if (!msg.device_manager || msg.device_manager->getDevices(devices) != ESP_OK) {
             ESP_LOGW(TAG, "Cannot obtain device snapshot");
-            return;
+            if (msg.type == UiMessageType::SET_HOME_PAGE) return;
+            snapshot_available = false;
         }
     }
     ESP_ERROR_CHECK(bsp_display_lock(-1));
@@ -72,6 +74,14 @@ void UiManager::ui_process_message(const UiMessage &msg)
         break;
     case UiMessageType::SET_HOME_PAGE:
         home_page_.update(devices);
+        lv_screen_load(home_page_.root());
+        break;
+    case UiMessageType::CONTROL_RESULT:
+        // A periodic refresh must not release controls belonging to an action
+        // queued while that refresh was in flight.
+        if (!msg.finished && home_page_.busy()) break;
+        home_page_.setStatus(msg.text, msg.error);
+        if (snapshot_available) home_page_.update(devices);
         lv_screen_load(home_page_.root());
         break;
     }
@@ -100,6 +110,17 @@ esp_err_t UiManager::setErrorPage(const char *text)
     UiMessage msg{};
     msg.type = UiMessageType::SET_ERROR_PAGE;
     snprintf(msg.text, sizeof(msg.text), "%s", text ? text : "An error occurred");
+    return ui_send(msg) ? ESP_OK : ESP_FAIL;
+}
+
+esp_err_t UiManager::setControlResult(DeviceManager *devices, const char *text, bool error, bool finished)
+{
+    UiMessage msg{};
+    msg.type = UiMessageType::CONTROL_RESULT;
+    msg.device_manager = devices;
+    msg.error = error;
+    msg.finished = finished;
+    snprintf(msg.text, sizeof(msg.text), "%s", text ? text : "");
     return ui_send(msg) ? ESP_OK : ESP_FAIL;
 }
 

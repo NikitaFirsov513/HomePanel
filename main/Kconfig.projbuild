@@ -5,6 +5,8 @@ menu "Home Panel"
         help
             Configure locally using menuconfig. Never commit this value.
             The token is embedded in firmware; protect firmware and build files.
+            Request both iot:view and iot:control permissions in Yandex OAuth
+            to read device states and send commands from the panel.
 
     config HOME_PANEL_REFRESH_SECONDS
         int "Device list refresh interval (seconds)"

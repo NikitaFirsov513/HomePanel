@@ -1,5 +1,9 @@
 cmake_minimum_required(VERSION 3.16)
 project(home_panel_model_tests LANGUAGES C CXX)
+if(MSVC)
+    add_compile_options(/utf-8)
+endif()
+
 set(cjson_default "$ENV{IDF_PATH}/components/json/cJSON")
 if(NOT EXISTS "${cjson_default}/cJSON.c")
     set(cjson_default "${CMAKE_CURRENT_LIST_DIR}/../managed_components/espressif__cjson/cJSON")
@@ -11,6 +15,7 @@ endif()
 add_executable(device_manager_tests
     device_manager_test.cpp
     ../main/src/DeviceManager.cpp
+    ../main/src/DeviceAction.cpp
     "${CJSON_ROOT}/cJSON.c")
 target_compile_features(device_manager_tests PRIVATE cxx_std_17)
 target_include_directories(device_manager_tests PRIVATE
@@ -30,4 +35,21 @@ if(EXISTS "$ENV{IDF_PATH}/components/esp_driver_dma/include/esp_async_color_conv
         "$ENV{IDF_PATH}/components/esp_driver_dma/include"
         "$ENV{IDF_PATH}/components/hal/include")
     add_test(NAME dma_compat COMMAND dma_compat_tests)
+endif()
+
+option(HOME_PANEL_UI_TESTS "Build headless LVGL interaction tests" OFF)
+if(HOME_PANEL_UI_TESTS)
+    set(LV_CONF_SKIP ON CACHE BOOL "" FORCE)
+    set(CONFIG_LV_BUILD_DEMOS OFF CACHE BOOL "" FORCE)
+    set(CONFIG_LV_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
+    set(CONFIG_LV_USE_THORVG OFF CACHE BOOL "" FORCE)
+    add_subdirectory(../managed_components/lvgl__lvgl lvgl)
+    target_compile_definitions(lvgl PUBLIC LV_USE_STDLIB_MALLOC=1 LV_USE_STDLIB_SPRINTF=1)
+    add_executable(home_page_tests home_page_test.cpp ../main/src/HomePage.cpp
+        ../main/src/DeviceManager.cpp ../main/fonts/font_roboto_20.c "${CJSON_ROOT}/cJSON.c")
+    target_compile_features(home_page_tests PRIVATE cxx_std_17)
+    target_include_directories(home_page_tests PRIVATE stubs ../main/include/Device
+        ../main/include/UI ../main/include/UI/pages "${CJSON_ROOT}")
+    target_link_libraries(home_page_tests PRIVATE lvgl)
+    add_test(NAME home_page COMMAND home_page_tests)
 endif()
