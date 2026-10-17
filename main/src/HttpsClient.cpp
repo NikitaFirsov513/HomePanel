@@ -1,6 +1,7 @@
 #include "HttpsClient.hpp"
 #include <string.h>
 #include <cstring>
+#include <cstdio>
 #include "esp_log.h"
 #include "esp_heap_caps.h"
 
@@ -162,6 +163,10 @@ HttpsRes_t HttpsClient::perform()
     response.transport_error =
         esp_http_client_perform(client_);
 
+    // A server response can be available even if ESP-IDF's automatic
+    // Basic/Digest challenge handling fails (e.g. a Bearer-token HTTP 401).
+    response.http_status = esp_http_client_get_status_code(client_);
+
     if (response_too_large_)
     {
         response.transport_error =
@@ -174,16 +179,13 @@ HttpsRes_t HttpsClient::perform()
     {
         ESP_LOGE(
             "HTTPS",
-            "Transport error: %s",
+            "Request failed: %s, HTTP %d",
             esp_err_to_name(
-                response.transport_error));
+                response.transport_error),
+            response.http_status);
 
         return response;
     }
-
-    response.http_status =
-        esp_http_client_get_status_code(
-            client_);
 
     response.body =
         response_buffer_;
@@ -360,7 +362,9 @@ HttpsRes_t HttpsClient::get(const HttpsReq_t &req)
         client_,
         nullptr,
         0);
-    if (err != ESP_OK)
+    // ESP-IDF clears post_data before removing Content-Type. On a fresh GET
+    // that header does not exist, so NOT_FOUND still means the body was reset.
+    if (err != ESP_OK && err != ESP_ERR_NOT_FOUND)
     {
         res.transport_error = err;
         return res;

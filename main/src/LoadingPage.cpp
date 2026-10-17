@@ -56,7 +56,7 @@ void LoadingPage::create()
 
 
 void LoadingPage::setText(
-    const char *text)
+    const char *text, bool loading)
 {
     if (label_ == nullptr)
         return;
@@ -64,4 +64,12 @@ void LoadingPage::setText(
     lv_label_set_text(
         label_,
         text);
+    if (loading) {
+        lv_obj_remove_flag(spinner_, LV_OBJ_FLAG_HIDDEN);
+    } else {
+        lv_obj_add_flag(spinner_, LV_OBJ_FLAG_HIDDEN);
+    }
+    lv_obj_set_style_text_color(label_,
+        loading ? lv_color_hex(0x333333) : lv_color_hex(0xC62828), 0);
+    lv_obj_align(label_, LV_ALIGN_CENTER, 0, loading ? 50 : 0);
 }

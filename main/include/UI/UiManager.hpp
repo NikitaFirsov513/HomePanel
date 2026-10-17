@@ -18,6 +18,7 @@ LV_FONT_DECLARE(font_roboto_20);
 enum class UiMessageType : uint8_t
 {
     SET_LOAD_PAGE,
+    SET_ERROR_PAGE,
     SET_HOME_PAGE,
 };
 
@@ -43,6 +44,7 @@ public:
     esp_err_t updateMainPage(DeviceManager *device_manager);
 
     esp_err_t setLoadPage(const char *text = "Loading...");
+    esp_err_t setErrorPage(const char *text);
     esp_err_t setHomePage(DeviceManager *device_manager);
 
 private:

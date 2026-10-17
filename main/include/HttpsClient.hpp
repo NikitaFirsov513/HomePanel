@@ -5,8 +5,6 @@
 #include "esp_crt_bundle.h"
 #include <string>
 
-#include "cJSON.h"
-
 #define HTTPS_RESPONSE_BUFFER_SIZE (32 * 1024)
 
 struct HttpsRes_t

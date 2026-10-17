@@ -55,23 +55,25 @@ static void device_sync_task(void *)
 {
     if (CONFIG_HOME_PANEL_YANDEX_TOKEN[0] == '\0') {
         ESP_LOGE(TAG, "Set the Yandex token in menuconfig > Home Panel");
-        ui_manager.setLoadPage("Set Yandex token in menuconfig > Home Panel");
+        ui_manager.setErrorPage("Yandex token is missing.\nSet it in menuconfig > Home Panel,\nthen rebuild and flash the firmware.");
         vTaskDelete(nullptr);
         return;
     }
+    bool show_progress = true;
     while (true) {
         if (!network_ready()) {
             ui_manager.setLoadPage("Waiting for Ethernet IP...");
             EventBits_t bits = xEventGroupWaitBits(eth_event_group, ETH_GOT_IP_BIT,
                                                   pdFALSE, pdTRUE, pdMS_TO_TICKS(15000));
             if (!(bits & ETH_GOT_IP_BIT)) {
-                ui_manager.setLoadPage("No network. Check Ethernet cable / DHCP. Retrying...");
+                ui_manager.setErrorPage("No network. Check Ethernet cable / DHCP. Retrying...");
                 vTaskDelay(pdMS_TO_TICKS(1000));
                 continue;
             }
         }
         esp_err_t error = ESP_OK;
         int http_status = 0;
+        if (show_progress) ui_manager.setLoadPage("Loading devices...");
         {
             // A new client also recovers from failed TLS connections.
             HttpsClient https("https://api.iot.yandex.net");
@@ -93,6 +95,7 @@ static void device_sync_task(void *)
         if (error == ESP_OK && network_ready()) {
             error = ui_manager.setHomePage(&device_manager);
             if (error == ESP_OK) {
+                show_progress = false;
                 ESP_LOGI(TAG, "Device list updated");
                 wait_connected(CONFIG_HOME_PANEL_REFRESH_SECONDS);
                 continue;
@@ -101,14 +104,17 @@ static void device_sync_task(void *)
         char message[128];
         if (!network_ready()) {
             snprintf(message, sizeof(message), "Network lost. Reconnecting...");
-        } else if (http_status == 401 || http_status == 403) {
-            snprintf(message, sizeof(message), "Authorization error (HTTP %d). Check Yandex token.", http_status);
+        } else if (http_status == 401) {
+            snprintf(message, sizeof(message), "HTTP 401: invalid Yandex token. Use access_token, not ClientID.");
+        } else if (http_status == 403) {
+            snprintf(message, sizeof(message), "HTTP 403: access denied. Check the token's iot:view permission.");
         } else {
             snprintf(message, sizeof(message), "Update failed: %s, HTTP %d. Retrying...",
                      esp_err_to_name(error), http_status);
         }
         ESP_LOGW(TAG, "%s", message);
-        ui_manager.setLoadPage(message);
+        show_progress = true;
+        ui_manager.setErrorPage(message);
         wait_connected(CONFIG_HOME_PANEL_RETRY_SECONDS);
     }
 }

@@ -7,7 +7,7 @@ class LoadingPage : public Page
 public:
     void create() override;
     void setText(
-        const char *text);
+        const char *text, bool loading = true);
 
 private:
     lv_obj_t *spinner_ = nullptr;

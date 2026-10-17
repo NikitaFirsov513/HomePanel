@@ -65,8 +65,10 @@ void UiManager::ui_process_message(const UiMessage &msg)
     ESP_ERROR_CHECK(bsp_display_lock(-1));
     switch (msg.type) {
     case UiMessageType::SET_LOAD_PAGE:
-        loading_page_.setText(msg.text);
+    case UiMessageType::SET_ERROR_PAGE:
+        loading_page_.setText(msg.text, msg.type == UiMessageType::SET_LOAD_PAGE);
         lv_screen_load(loading_page_.root());
+        ESP_LOGI(TAG, "Status screen: %s", msg.text);
         break;
     case UiMessageType::SET_HOME_PAGE:
         home_page_.update(devices);
@@ -90,6 +92,14 @@ esp_err_t UiManager::setHomePage(DeviceManager *device_manager)
     UiMessage msg{};
     msg.type = UiMessageType::SET_HOME_PAGE;
     msg.device_manager = device_manager;
+    return ui_send(msg) ? ESP_OK : ESP_FAIL;
+}
+
+esp_err_t UiManager::setErrorPage(const char *text)
+{
+    UiMessage msg{};
+    msg.type = UiMessageType::SET_ERROR_PAGE;
+    snprintf(msg.text, sizeof(msg.text), "%s", text ? text : "An error occurred");
     return ui_send(msg) ? ESP_OK : ESP_FAIL;
 }
 

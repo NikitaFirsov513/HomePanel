@@ -9,6 +9,10 @@
 #include "esp_mac.h"
 #include "driver/gpio.h"
 #include "sdkconfig.h"
+#include "esp_idf_version.h"
+#if ESP_IDF_VERSION_MAJOR >= 6 && CONFIG_EXAMPLE_ETH_PHY_IP101
+#include "esp_eth_phy_ip101.h"
+#endif
 #if CONFIG_EXAMPLE_USE_SPI_ETHERNET
 #include "driver/spi_master.h"
 #endif // CONFIG_EXAMPLE_USE_SPI_ETHERNET

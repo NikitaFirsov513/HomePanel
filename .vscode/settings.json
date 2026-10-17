@@ -23,7 +23,7 @@
     "board/esp32p4-builtin.cfg"
   ],
   "idf.portWin": "COM7",
-  "idf.currentSetup": "e:\\espidf\\v5.5.1\\esp-idf",
+  "idf.currentSetup": "D:\\esp\\v6.1\\esp-idf",
   "idf.customExtraVars": {
     "IDF_TARGET": "esp32p4"
   },
@@ -33,5 +33,6 @@
     "--query-driver=**",
     "--compile-commands-dir=d:\\PROJECTS\\ESP\\home_panel\\build"
   ],
-  "idf.flashType": "JTAG"
+  "idf.flashType": "JTAG",
+  "idf.port": "COM3"
 }

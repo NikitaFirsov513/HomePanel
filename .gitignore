@@ -18,6 +18,7 @@
 
 # Build artifacts and directories
 **/build/
+build-idf61/
 build/
 *.o
 *.a
