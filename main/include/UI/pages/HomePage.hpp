@@ -17,12 +17,22 @@ public:
 private:
     lv_obj_t *list_ = nullptr;
     lv_obj_t *status_ = nullptr;
+    lv_obj_t *count_ = nullptr;
+    lv_obj_t *overlay_ = nullptr;
+    lv_obj_t *details_ = nullptr;
+    lv_obj_t *detail_title_ = nullptr;
+    lv_obj_t *detail_status_ = nullptr;
+    lv_obj_t *close_ = nullptr;
     std::vector<lv_obj_t *> widgets_;
     ActionHandler handler_ = nullptr;
     bool busy_ = false;
     std::string expanded_id_;
-    std::vector<std::pair<std::string, lv_obj_t *>> panels_;
+    std::vector<Device> devices_;
+    size_t card_widget_count_ = 1;
     void toggleDevice(const std::string &id);
+    void closeDetails();
+    void showDetails(const Device &device);
+    void createControls(const Device &device, lv_obj_t *body);
     struct Binding;
     static void controlEvent(lv_event_t *event);
     void submit(const DeviceAction &action);
