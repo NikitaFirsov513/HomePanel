@@ -113,6 +113,7 @@ void HomePage::setStatus(const char *text, bool error, bool finished)
     lv_obj_set_style_text_color(status_, lv_color_hex(error ? 0xBC3E4B : MUTED), 0);
     lv_label_set_text(detail_status_, text);
     lv_obj_set_style_text_color(detail_status_, lv_color_hex(error ? 0xBC3E4B : MUTED), 0);
+    editor_.house().setStatus(text, error);
     if (finished) {
         busy_ = false;
         for (auto *obj : widgets_) lv_obj_set_disabled(obj, false);
@@ -216,7 +217,7 @@ void HomePage::create()
     auto *header = lv_obj_create(root_);
     surface(header, 0xF3F4F7, 0);
     lv_obj_set_size(header, LV_PCT(100), 52);
-    auto *heading = label(header, "Мой дом");
+    auto *heading = label(header, "Устройства");
     lv_obj_set_width(heading, 150);
     lv_obj_align(heading, LV_ALIGN_LEFT_MID, 0, 0);
     count_ = label(header, "");
@@ -244,8 +245,6 @@ void HomePage::create()
     auto *house = button(header, "Дом");
     lv_obj_set_width(house, 112);
     lv_obj_align(house, LV_ALIGN_RIGHT_MID, -320, 0);
-    lv_obj_set_style_bg_color(house, lv_color_hex(ACCENT), 0);
-    lv_obj_set_style_text_color(house, lv_color_hex(0xFFFFFF), 0);
     lv_obj_add_event_cb(house, [](lv_event_t *event) {
         auto *page = static_cast<HomePage *>(lv_event_get_user_data(event));
         if (!page->busy_) page->editor_.showHouse(page->root_);
@@ -312,6 +311,9 @@ void HomePage::create()
     lv_obj_set_scrollable(details_, true);
     lv_obj_set_scroll_dir(details_, LV_DIR_VER);
     lv_obj_set_hidden(overlay_, true);
+    // Open the saved house immediately, including before network/device loading.
+    // Subsequent model updates preserve whichever section the user opened.
+    editor_.showHouse(root_);
 }
 
 void HomePage::create(DeviceManager *device_manager)

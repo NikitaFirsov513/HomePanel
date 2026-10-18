@@ -19,6 +19,7 @@ public:
     void show(lv_obj_t *parent, const FloorPlan::Document &plan, const std::vector<Device> &devices);
     void update(const FloorPlan::Document &plan, const std::vector<Device> &devices);
     void hide();
+    void setStatus(const char *text, bool error = false);
     lv_obj_t *root() const { return root_; }
     lv_obj_t *canvas() const { return canvas_; }
     const HouseProjection &projection() const { return projection_; }

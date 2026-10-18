@@ -78,6 +78,23 @@ int main()
         const std::vector<Device> devices = {lamp, lamp2, lamp3, vacuum, speaker, speaker2};
         page.update(devices);
         lv_screen_load(page.root());
+        auto &default_house = page.editor().house();
+        CHECK(default_house.root() && lv_obj_is_visible(default_house.root()));
+        CHECK(lv_obj_has_flag(page.editor().root(), LV_OBJ_FLAG_HIDDEN));
+        page.setStatus("Нет подключения к сети", true);
+        CHECK(textButton(default_house.root(), "Нет подключения к сети"));
+        auto *open_list = textButton(default_house.root(), "Список"); CHECK(open_list);
+        lv_obj_send_event(open_list, LV_EVENT_CLICKED, nullptr);
+        CHECK(!lv_obj_is_visible(default_house.root()));
+        page.update(devices); // A refresh must preserve the selected list screen.
+        CHECK(!lv_obj_is_visible(default_house.root()));
+        auto *open_home = textButton(page.root(), "Дом"); CHECK(open_home);
+        lv_obj_send_event(open_home, LV_EVENT_CLICKED, nullptr);
+        page.update(devices); // A refresh must also preserve the house screen.
+        CHECK(lv_obj_is_visible(default_house.root()));
+        lv_obj_send_event(open_list, LV_EVENT_CLICKED, nullptr);
+        CHECK(!lv_obj_is_visible(default_house.root()) && calls == 0);
+        page.setStatus("Устройства готовы к управлению", false);
         auto *card = textButton(page.root(), lamp.name.c_str()); CHECK(card);
         lv_obj_send_event(card, LV_EVENT_CLICKED, nullptr);
         CHECK(calls == 0); // Opening details never sends a device command.
@@ -269,6 +286,7 @@ int main()
         page.setStatus("Команда выполнена", false); page.update(devices);
         close = textButton(page.root(), "Готово"); CHECK(close); lv_obj_send_event(close, LV_EVENT_CLICKED, nullptr);
         houseClick("Сверху"); CHECK(house.levelFilter() == 2);
+        CHECK(lv_obj_is_visible(house.root())); // Closing device controls returns to the house.
         const auto floor_point = house.devicePoint("yandex:vacuum");
         house.pointerDown(int(floor_point.x), int(floor_point.y)); house.pointerUp(int(floor_point.x), int(floor_point.y));
         CHECK(!textButton(page.root(), "Начать уборку")); // Filtered floor objects are not clickable.
@@ -289,7 +307,7 @@ int main()
         snapshot(display, "house-perspective.ppm");
         houseClick("Редактор 2D"); CHECK(!lv_obj_has_flag(editor.root(), LV_OBJ_FLAG_HIDDEN));
         click("Смотреть дом"); CHECK(!lv_obj_has_flag(house.root(), LV_OBJ_FLAG_HIDDEN));
-        houseClick("К списку"); CHECK(lv_obj_has_flag(house.root(), LV_OBJ_FLAG_HIDDEN));
+        houseClick("Список"); CHECK(lv_obj_has_flag(house.root(), LV_OBJ_FLAG_HIDDEN));
 
         // Same XY at three heights stays distinct in all camera directions;
         // exact overlapping markers provide an explicit device picker.

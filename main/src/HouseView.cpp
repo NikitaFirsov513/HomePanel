@@ -131,7 +131,7 @@ void HouseView::create(lv_obj_t *parent)
     lv_obj_set_flex_align(header, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
     auto *title = label(header, "Мой дом"); lv_obj_set_width(title, 130);
     auto *subtitle = label(header, "Объёмный вид", MUTED); lv_obj_set_width(subtitle, 0); lv_obj_set_flex_grow(subtitle, 1);
-    button(header, "Редактор 2D", Edit); button(header, "К списку", Close);
+    button(header, "Редактор 2D", Edit); button(header, "Список", Close);
     auto *tools = lv_obj_create(root_); surface(tools, 0xF3F4F8, 0); lv_obj_set_size(tools, LV_PCT(100), 44);
     lv_obj_set_flex_flow(tools, LV_FLEX_FLOW_ROW); lv_obj_set_style_pad_column(tools, 7, 0);
     for (int i = 0; i < 4; ++i) filters_.push_back(button(tools, i == 0 ? "Все уровни" : levelNames[i - 1], FilterBase + i));
@@ -163,6 +163,12 @@ void HouseView::hide()
     pressed_ = false;
     if (chooser_) { lv_obj_delete(chooser_); chooser_ = nullptr; }
     if (root_) lv_obj_set_hidden(root_, true);
+}
+void HouseView::setStatus(const char *text, bool error)
+{
+    if (!status_) return;
+    lv_label_set_text(status_, text);
+    lv_obj_set_style_text_color(status_, lv_color_hex(error ? 0xBC3E4B : MUTED), 0);
 }
 const PlanRoom *HouseView::room(uint32_t id) const
 {
