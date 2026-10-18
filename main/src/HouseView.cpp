@@ -6,18 +6,17 @@
 #include <cstdio>
 #include <functional>
 
-// Keep draw commands in canvas coordinates. Panning only translates these
-// commands; room sorting, opening segmentation and text measurement stay cached.
+// Keep draw commands in canvas coordinates so room sorting, opening
+// segmentation and text measurement stay cached between redraws.
 struct HouseScene {
     using Command = std::function<void(lv_layer_t *, int, int)>;
     std::vector<Command> commands;
-    double offset_x = 0, offset_y = 0;
 };
 
 extern "C" { LV_FONT_DECLARE(font_roboto_20); }
 namespace {
 constexpr uint32_t INK = 0x293246, MUTED = 0x7C879B, ACCENT = 0x6854D9;
-enum Op { Edit, Close, Rotate, ZoomOut, ZoomIn, Fit, Walls, FilterBase = 20, PickBase = 100, ClosePicker = 200 };
+enum Op { Edit, Close, Rotate, Walls, FilterBase = 20, PickBase = 100, ClosePicker = 200 };
 const char *levelNames[] = {"Снизу", "Середина", "Сверху"};
 void surface(lv_obj_t *obj, uint32_t color, int radius = 14)
 {
@@ -137,11 +136,11 @@ void HouseView::create(lv_obj_t *parent)
     lv_obj_set_flex_flow(tools, LV_FLEX_FLOW_ROW); lv_obj_set_style_pad_column(tools, 7, 0);
     for (int i = 0; i < 4; ++i) filters_.push_back(button(tools, i == 0 ? "Все уровни" : levelNames[i - 1], FilterBase + i));
     walls_button_ = button(tools, "Стены: 27%", Walls);
-    button(tools, "Поворот", Rotate); button(tools, "-", ZoomOut); button(tools, "+", ZoomIn); button(tools, "Вписать", Fit);
+    button(tools, "Поворот", Rotate);
     canvas_ = lv_obj_create(root_); surface(canvas_, 0xF8F9FC, 20);
     lv_obj_set_width(canvas_, LV_PCT(100)); lv_obj_set_flex_grow(canvas_, 1);
     lv_obj_set_press_lock(canvas_, true); lv_obj_add_event_cb(canvas_, event, LV_EVENT_ALL, this);
-    status_ = label(root_, "Нажмите на устройство для управления. Тяните дом, чтобы переместить вид.", MUTED);
+    status_ = label(root_, "Нажмите на устройство для управления. Кнопка «Поворот» меняет ракурс дома.", MUTED);
     perform(FilterBase);
     lv_obj_update_layout(root_);
 }
@@ -188,21 +187,11 @@ void HouseView::fit()
     scene_dirty_ = true;
     projection_.fit(plan_, lv_obj_get_width(canvas_), lv_obj_get_height(canvas_)); lv_obj_invalidate(canvas_);
 }
-void HouseView::zoom(double factor)
-{
-    scene_dirty_ = true;
-    const double next = std::clamp(projection_.scale * factor, 2.0, 90.0), ratio = next / projection_.scale;
-    projection_.offset_x = lv_obj_get_width(canvas_) * 0.5 + (projection_.offset_x - lv_obj_get_width(canvas_) * 0.5) * ratio;
-    projection_.offset_y = lv_obj_get_height(canvas_) * 0.5 + (projection_.offset_y - lv_obj_get_height(canvas_) * 0.5) * ratio;
-    projection_.scale = next; lv_obj_invalidate(canvas_);
-}
 void HouseView::perform(int action)
 {
     if (action == Edit) { hide(); if (edit_handler_) edit_handler_(context_); return; }
     if (action == Close) { hide(); return; }
     if (action == Rotate) { projection_.rotation = (projection_.rotation + 1) % 4; fit(); return; }
-    if (action == ZoomIn || action == ZoomOut) { zoom(action == ZoomIn ? 1.2 : 1 / 1.2); return; }
-    if (action == Fit) { fit(); return; }
     if (action == Walls) {
         scene_dirty_ = true;
         wall_opacity_ = wall_opacity_ == 70 ? 110 : wall_opacity_ == 110 ? 0 : 70;
@@ -258,16 +247,13 @@ void HouseView::pointerDown(int x, int y)
 {
     if (chooser_) return;
     pressed_ = true; dragged_ = false; down_x_ = x; down_y_ = y;
-    original_x_ = projection_.offset_x; original_y_ = projection_.offset_y;
 }
 void HouseView::pointerMove(int x, int y)
 {
     if (!pressed_) return;
     if (std::abs(x - down_x_) + std::abs(y - down_y_) <= 8 && !dragged_) return;
     dragged_ = true;
-    projection_.offset_x = std::clamp(original_x_ + x - down_x_, -2000.0, 2000.0);
-    projection_.offset_y = std::clamp(original_y_ + y - down_y_, -2000.0, 2000.0);
-    lv_obj_invalidate(canvas_);
+    // A swipe cancels the tap without moving the camera or opening a device.
 }
 void HouseView::pointerUp(int x, int y)
 {
@@ -309,16 +295,13 @@ void HouseView::draw(lv_layer_t *layer)
 {
     if (!scene_ || scene_dirty_) buildScene();
     lv_area_t area; lv_obj_get_coords(canvas_, &area);
-    const int x = area.x1 + std::lround(projection_.offset_x - scene_->offset_x);
-    const int y = area.y1 + std::lround(projection_.offset_y - scene_->offset_y);
-    for (auto &command : scene_->commands) command(layer, x, y);
+    for (auto &command : scene_->commands) command(layer, area.x1, area.y1);
 }
 
 void HouseView::buildScene()
 {
     if (!scene_) scene_ = std::make_unique<HouseScene>();
     scene_->commands.clear();
-    scene_->offset_x = projection_.offset_x; scene_->offset_y = projection_.offset_y;
     scene_dirty_ = false;
     Painter paint{*scene_, {0, 0, 0, 0}, projection_};
     if (plan_.rooms.empty()) {

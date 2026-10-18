@@ -275,8 +275,9 @@ int main()
         houseClick("Все уровни"); CHECK(house.levelFilter() == -1);
         const auto original_point = house.devicePoint("yandex:lamp");
         house.pointerDown(20, 20); house.pointerMove(55, 40); house.pointerUp(55, 40);
-        CHECK(std::abs(house.devicePoint("yandex:lamp").x - original_point.x - 35) < 0.01);
-        houseClick("Вписать");
+        CHECK(std::abs(house.devicePoint("yandex:lamp").x - original_point.x) < 0.01);
+        CHECK(std::abs(house.devicePoint("yandex:lamp").y - original_point.y) < 0.01);
+        CHECK(!textButton(house.root(), "+") && !textButton(house.root(), "-") && !textButton(house.root(), "Вписать"));
         houseClick("Поворот"); CHECK(house.projection().rotation == 1);
         snapshot(display, "house-rotated.ppm");
         for (int i = 0; i < 3; ++i) houseClick("Поворот");
@@ -317,13 +318,16 @@ int main()
             clickView("Поворот");
         }
         snapshot(display, "house-levels.ppm");
-        // A translated cached scene must match a fresh render at the same
-        // camera position, including translucent walls and device hit targets.
+        // Swipes leave the camera and image fixed and must not activate pins.
         const auto before_pan_pixels = pixels;
-        isolated.pointerDown(10, 10); isolated.pointerMove(47, 33); isolated.pointerUp(47, 33);
+        const auto swipe_pin = isolated.devicePoint("yandex:lamp3"); picked.clear();
+        isolated.pointerDown(int(swipe_pin.x) - 40, int(swipe_pin.y));
+        isolated.pointerMove(int(swipe_pin.x), int(swipe_pin.y));
+        isolated.pointerUp(int(swipe_pin.x), int(swipe_pin.y));
+        CHECK(picked.empty());
         lv_refr_now(display);
         const auto cached_pan_pixels = pixels;
-        CHECK(cached_pan_pixels != before_pan_pixels);
+        CHECK(cached_pan_pixels == before_pan_pixels);
         isolated.update(stacked.document(), devices);
         lv_refr_now(display);
         CHECK(pixels == cached_pan_pixels);

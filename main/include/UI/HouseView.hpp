@@ -42,7 +42,6 @@ private:
     EditHandler edit_handler_ = nullptr;
     int level_filter_ = -1, wall_opacity_ = 70;
     int down_x_ = 0, down_y_ = 0;
-    double original_x_ = 0, original_y_ = 0;
     bool pressed_ = false, dragged_ = false;
     std::string selected_;
     std::unique_ptr<HouseScene> scene_;
@@ -52,7 +51,6 @@ private:
     void create(lv_obj_t *parent);
     void perform(int action);
     void fit();
-    void zoom(double factor);
     void chooseDevice(size_t index);
     void showChooser(const std::vector<size_t> &indices);
     const Device *device(const std::string &id) const;
