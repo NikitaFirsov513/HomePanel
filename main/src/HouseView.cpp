@@ -4,6 +4,15 @@
 #include <array>
 #include <cmath>
 #include <cstdio>
+#include <functional>
+
+// Keep draw commands in canvas coordinates. Panning only translates these
+// commands; room sorting, opening segmentation and text measurement stay cached.
+struct HouseScene {
+    using Command = std::function<void(lv_layer_t *, int, int)>;
+    std::vector<Command> commands;
+    double offset_x = 0, offset_y = 0;
+};
 
 extern "C" { LV_FONT_DECLARE(font_roboto_20); }
 namespace {
@@ -22,7 +31,7 @@ lv_obj_t *label(lv_obj_t *parent, const char *text, uint32_t color = INK)
     lv_obj_set_width(obj, LV_PCT(100)); lv_obj_set_style_text_color(obj, lv_color_hex(color), 0); return obj;
 }
 struct Painter {
-    lv_layer_t *layer;
+    HouseScene &scene;
     lv_area_t area;
     const HouseProjection &projection;
     void line(HousePoint a, HousePoint b, uint32_t color, int width = 1, int opacity = 255, bool dashed = false) const {
@@ -31,7 +40,11 @@ struct Painter {
         d.p2.x = area.x1 + std::lround(b.x); d.p2.y = area.y1 + std::lround(b.y);
         d.color = lv_color_hex(color); d.width = width; d.opa = opacity; d.round_start = d.round_end = 1;
         if (dashed) { d.dash_width = 3; d.dash_gap = 5; }
-        lv_draw_line(layer, &d);
+        scene.commands.emplace_back([d](lv_layer_t *layer, int x, int y) mutable {
+            auto moved = d;
+            moved.p1.x += x; moved.p2.x += x; moved.p1.y += y; moved.p2.y += y;
+            lv_draw_line(layer, &moved);
+        });
     }
     void polygon(const std::array<HousePoint, 4> &p, uint32_t color, int opacity = 255) const {
         for (int i = 0; i < 2; ++i) {
@@ -41,7 +54,12 @@ struct Painter {
                 d.p[j].x = area.x1 + std::lround(p[indices[j]].x);
                 d.p[j].y = area.y1 + std::lround(p[indices[j]].y);
             }
-            d.color = lv_color_hex(color); d.opa = opacity; lv_draw_triangle(layer, &d);
+            d.color = lv_color_hex(color); d.opa = opacity;
+            scene.commands.emplace_back([d](lv_layer_t *layer, int x, int y) mutable {
+                auto moved = d;
+                for (auto &point : moved.p) { point.x += x; point.y += y; }
+                lv_draw_triangle(layer, &moved);
+            });
         }
     }
     std::array<HousePoint, 4> quad(const std::array<HousePosition, 4> &points, uint32_t color, int opacity = 255) const {
@@ -56,18 +74,32 @@ struct Painter {
         d.border_color = lv_color_hex(border); d.border_width = border_width;
         const int px = std::lround(x), py = std::lround(y);
         lv_area_t a = {area.x1 + px, area.y1 + py, area.x1 + px + w - 1, area.y1 + py + h - 1};
-        lv_draw_rect(layer, &d, &a);
+        scene.commands.emplace_back([d, a](lv_layer_t *layer, int x, int y) mutable {
+            const lv_area_t moved = {a.x1 + x, a.y1 + y, a.x2 + x, a.y2 + y};
+            lv_draw_rect(layer, &d, &moved);
+        });
     }
     void text(double x, double y, int w, const std::string &text, uint32_t color = INK) const {
         lv_draw_label_dsc_t d; lv_draw_label_dsc_init(&d);
         d.text = text.c_str(); d.text_local = 1; d.font = &font_roboto_20; d.color = lv_color_hex(color);
         const int px = std::lround(x), py = std::lround(y);
         lv_area_t a = {area.x1 + px, area.y1 + py, area.x1 + px + w - 1, area.y1 + py + 24};
-        lv_draw_label(layer, &d, &a);
+        scene.commands.emplace_back([d, a, text](lv_layer_t *layer, int x, int y) mutable {
+            const lv_area_t moved = {a.x1 + x, a.y1 + y, a.x2 + x, a.y2 + y};
+            d.text = text.c_str();
+            lv_draw_label(layer, &d, &moved);
+        });
+    }
+    void icon(DeviceIcon icon, lv_area_t a, uint32_t color) const {
+        scene.commands.emplace_back([icon, a, color](lv_layer_t *layer, int x, int y) {
+            const lv_area_t moved = {a.x1 + x, a.y1 + y, a.x2 + x, a.y2 + y};
+            drawDeviceIcon(layer, icon, moved, lv_color_hex(color));
+        });
     }
 };
 }
 struct HouseView::Action { HouseView *view; int code; };
+HouseView::HouseView() = default;
 HouseView::~HouseView() { if (root_) lv_obj_delete(root_); }
 void HouseView::setHandlers(void *context, DeviceHandler device, EditHandler edit)
 {
@@ -124,6 +156,7 @@ void HouseView::update(const FloorPlan::Document &plan, const std::vector<Device
     plan_ = plan; devices_ = devices;
     walls_ = houseWalls(plan_); apertures_.clear();
     for (const auto &wall : walls_) apertures_.push_back(wallApertures(wall, plan_));
+    scene_dirty_ = true;
     if (canvas_) lv_obj_invalidate(canvas_);
 }
 void HouseView::hide()
@@ -152,10 +185,12 @@ HousePoint HouseView::devicePoint(const std::string &id) const
 }
 void HouseView::fit()
 {
+    scene_dirty_ = true;
     projection_.fit(plan_, lv_obj_get_width(canvas_), lv_obj_get_height(canvas_)); lv_obj_invalidate(canvas_);
 }
 void HouseView::zoom(double factor)
 {
+    scene_dirty_ = true;
     const double next = std::clamp(projection_.scale * factor, 2.0, 90.0), ratio = next / projection_.scale;
     projection_.offset_x = lv_obj_get_width(canvas_) * 0.5 + (projection_.offset_x - lv_obj_get_width(canvas_) * 0.5) * ratio;
     projection_.offset_y = lv_obj_get_height(canvas_) * 0.5 + (projection_.offset_y - lv_obj_get_height(canvas_) * 0.5) * ratio;
@@ -169,12 +204,14 @@ void HouseView::perform(int action)
     if (action == ZoomIn || action == ZoomOut) { zoom(action == ZoomIn ? 1.2 : 1 / 1.2); return; }
     if (action == Fit) { fit(); return; }
     if (action == Walls) {
+        scene_dirty_ = true;
         wall_opacity_ = wall_opacity_ == 70 ? 110 : wall_opacity_ == 110 ? 0 : 70;
         auto *caption = lv_obj_get_child(walls_button_, 0);
         lv_label_set_text_fmt(caption, "Стены: %d%%", wall_opacity_ * 100 / 255);
         lv_obj_invalidate(canvas_); return;
     }
     if (action >= FilterBase && action < FilterBase + 4) {
+        scene_dirty_ = true;
         level_filter_ = action - FilterBase - 1;
         for (int i = 0; i < 4; ++i) {
             const bool active = i == action - FilterBase;
@@ -192,6 +229,7 @@ void HouseView::chooseDevice(size_t index)
     const auto p = plan_.devices[index];
     if (chooser_) { lv_obj_delete(chooser_); chooser_ = nullptr; }
     selected_ = p.device_id;
+    scene_dirty_ = true;
     const auto *current = device(p.device_id);
     const auto *r = room(p.room_id);
     const std::string name = current ? current->name : p.name;
@@ -255,6 +293,7 @@ void HouseView::event(lv_event_t *event)
 {
     auto *view = static_cast<HouseView *>(lv_event_get_user_data(event));
     const auto code = lv_event_get_code(event);
+    if (code == LV_EVENT_SIZE_CHANGED) { view->scene_dirty_ = true; return; }
     if (code == LV_EVENT_DRAW_MAIN) { view->draw(lv_event_get_layer(event)); return; }
     if (code == LV_EVENT_PRESS_LOST) { view->pressed_ = false; return; }
     if (code != LV_EVENT_PRESSED && code != LV_EVENT_PRESSING && code != LV_EVENT_RELEASED) return;
@@ -268,8 +307,20 @@ void HouseView::event(lv_event_t *event)
 
 void HouseView::draw(lv_layer_t *layer)
 {
+    if (!scene_ || scene_dirty_) buildScene();
     lv_area_t area; lv_obj_get_coords(canvas_, &area);
-    Painter paint{layer, area, projection_};
+    const int x = area.x1 + std::lround(projection_.offset_x - scene_->offset_x);
+    const int y = area.y1 + std::lround(projection_.offset_y - scene_->offset_y);
+    for (auto &command : scene_->commands) command(layer, x, y);
+}
+
+void HouseView::buildScene()
+{
+    if (!scene_) scene_ = std::make_unique<HouseScene>();
+    scene_->commands.clear();
+    scene_->offset_x = projection_.offset_x; scene_->offset_y = projection_.offset_y;
+    scene_dirty_ = false;
+    Painter paint{*scene_, {0, 0, 0, 0}, projection_};
     if (plan_.rooms.empty()) {
         paint.text(36, 60, lv_obj_get_width(canvas_) - 72, "Создайте план дома в редакторе 2D", ACCENT);
         paint.text(36, 100, lv_obj_get_width(canvas_) - 72, "Комнаты и уровни устройств появятся здесь автоматически", MUTED);
@@ -384,9 +435,9 @@ void HouseView::draw(lv_layer_t *layer)
         const uint32_t background = active && light ? 0xFFF3D6 : selected ? 0xF1EDFF : 0xFFFFFF;
         paint.rect(anchor.x - 22, anchor.y - 22, 44, 44, background, 255, 22, selected ? ACCENT : 0xCFD7E5, selected ? 3 : 1);
         const uint32_t ink = !d ? 0xA1A9BA : light ? 0xB58A35 : ACCENT;
-        lv_area_t icon = {area.x1 + static_cast<int>(std::lround(anchor.x)) - 18, area.y1 + static_cast<int>(std::lround(anchor.y)) - 18,
-                          area.x1 + static_cast<int>(std::lround(anchor.x)) + 17, area.y1 + static_cast<int>(std::lround(anchor.y)) + 17};
-        drawDeviceIcon(layer, deviceIconForType(p->type), icon, lv_color_hex(ink));
+        lv_area_t icon = {static_cast<int>(std::lround(anchor.x)) - 18, static_cast<int>(std::lround(anchor.y)) - 18,
+                         static_cast<int>(std::lround(anchor.x)) + 17, static_cast<int>(std::lround(anchor.y)) + 17};
+        paint.icon(deviceIconForType(p->type), icon, ink);
         paint.rect(anchor.x + 11, anchor.y - 23, 12, 12, tier, 255, 6, 0xFFFFFF, 2);
         if (active) paint.rect(anchor.x + 12, anchor.y + 12, 9, 9, 0x36A37D, 255, 5, 0xFFFFFF, 1);
     }

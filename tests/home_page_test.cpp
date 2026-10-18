@@ -317,6 +317,19 @@ int main()
             clickView("Поворот");
         }
         snapshot(display, "house-levels.ppm");
+        // A translated cached scene must match a fresh render at the same
+        // camera position, including translucent walls and device hit targets.
+        const auto before_pan_pixels = pixels;
+        isolated.pointerDown(10, 10); isolated.pointerMove(47, 33); isolated.pointerUp(47, 33);
+        lv_refr_now(display);
+        const auto cached_pan_pixels = pixels;
+        CHECK(cached_pan_pixels != before_pan_pixels);
+        isolated.update(stacked.document(), devices);
+        lv_refr_now(display);
+        CHECK(pixels == cached_pan_pixels);
+        const auto moved_pin = isolated.devicePoint("yandex:lamp3"); picked.clear();
+        isolated.pointerDown(int(moved_pin.x), int(moved_pin.y)); isolated.pointerUp(int(moved_pin.x), int(moved_pin.y));
+        CHECK(picked == "yandex:lamp3");
         pin.device_id = "yandex:lamp2"; pin.name = lamp2.name; pin.level = PlanLevel::Floor; CHECK(stacked.placeDevice(pin));
         isolated.update(stacked.document(), devices);
         const auto shared = isolated.devicePoint("yandex:lamp"); picked.clear();

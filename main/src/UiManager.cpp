@@ -27,6 +27,15 @@ esp_err_t UiManager::init()
     home_page_.update({});
     home_page_.setStatus("Ожидание подключения к сети...", false);
     lv_screen_load(home_page_.root());
+#if CONFIG_HOME_PANEL_LOG_FPS
+    if (esp_lv_adapter_fps_stats_enable(nullptr, true) == ESP_OK) {
+        lv_timer_create([](lv_timer_t *) {
+            uint32_t fps = 0;
+            if (esp_lv_adapter_get_fps(nullptr, &fps) == ESP_OK)
+                ESP_LOGI(TAG, "Display FPS: %lu (measure while moving the UI)", static_cast<unsigned long>(fps));
+        }, 5000, nullptr);
+    }
+#endif
     bsp_display_unlock();
     bsp_display_backlight_on();
     if (xTaskCreate(ui_task_entry, "ui_task", UI_TASK_STACK, this,

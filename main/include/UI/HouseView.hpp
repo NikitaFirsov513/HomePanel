@@ -3,10 +3,13 @@
 #include "HouseProjection.hpp"
 #include "Device.hpp"
 #include "lvgl.h"
+#include <memory>
+
+struct HouseScene;
 
 class HouseView {
 public:
-    HouseView() = default;
+    HouseView();
     HouseView(const HouseView &) = delete;
     HouseView &operator=(const HouseView &) = delete;
     using DeviceHandler = void (*)(void *, const std::string &);
@@ -42,6 +45,8 @@ private:
     double original_x_ = 0, original_y_ = 0;
     bool pressed_ = false, dragged_ = false;
     std::string selected_;
+    std::unique_ptr<HouseScene> scene_;
+    bool scene_dirty_ = true;
     struct Action;
     lv_obj_t *button(lv_obj_t *parent, const char *text, int action);
     void create(lv_obj_t *parent);
@@ -54,5 +59,6 @@ private:
     const PlanRoom *room(uint32_t id) const;
     bool visible(const PlanPlacement &placement) const;
     void draw(lv_layer_t *layer);
+    void buildScene();
     static void event(lv_event_t *event);
 };

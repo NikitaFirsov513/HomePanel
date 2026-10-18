@@ -17,6 +17,14 @@ menu "Home Panel"
         int "Retry delay after a request error (seconds)"
         range 1 300
         default 10
+
+    config HOME_PANEL_LOG_FPS
+        bool "Log display FPS every 5 seconds"
+        depends on ESP_LVGL_ADAPTER_ENABLE_FPS_STATS
+        default n
+        help
+            Enable for on-device performance measurements while scrolling or
+            panning. Low or zero FPS is expected when the screen is idle.
 endmenu
 
 menu "Ethernet Configuration"
