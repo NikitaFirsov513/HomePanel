@@ -20,6 +20,7 @@
 #include "DeviceAction.hpp"
 #include "YandexAuth.hpp"
 #include "AuthStorage.hpp"
+#include "HomeAssistant.hpp"
 #include "esp_mac.h"
 #include "esp_timer.h"
 
@@ -28,6 +29,7 @@ static const char *TAG = "MAIN";
 static EventGroupHandle_t eth_event_group;
 static QueueHandle_t action_queue;
 static QueueHandle_t auth_queue;
+static QueueHandle_t connection_queue;
 static std::atomic<bool> auth_ready{false};
 static std::atomic<TaskHandle_t> sync_task_handle{nullptr};
 static UiManager ui_manager;
@@ -50,7 +52,13 @@ static bool enqueue_action(const DeviceAction &action)
 static bool enqueue_auth(AuthAction action)
 {
     if (!auth_queue || xQueueSend(auth_queue, &action, 0) != pdTRUE) return false;
-    if (action == AuthAction::Logout || action == AuthAction::Restart) auth_ready.store(false);
+    if (auto task = sync_task_handle.load()) xTaskNotifyGive(task);
+    return true;
+}
+
+static bool enqueue_connection(const ConnectionCommand &command)
+{
+    if (!connection_queue || xQueueSend(connection_queue, &command, 0) != pdTRUE) return false;
     if (auto task = sync_task_handle.load()) xTaskNotifyGive(task);
     return true;
 }
@@ -115,6 +123,7 @@ static bool send_action(const DeviceAction &action, const std::string &token, st
 {
     auto device = device_manager.getDeviceById(action.device_id);
     if (!device) { message = "Устройство больше не найдено. Обновите список."; return false; }
+    if (device->source != DeviceSource::Yandex || !device->available) { message = "Устройство недоступно"; return false; }
     std::string body;
     const auto error = buildDeviceAction(*device, action, body);
     if (error != ESP_OK) { message = "Команда недоступна для этого устройства"; return false; }
@@ -155,6 +164,52 @@ static bool same_auth(const AuthSnapshot &a, const AuthSnapshot &b)
            !strcmp(a.user_code, b.user_code) && !strcmp(a.verification_url, b.verification_url) && !strcmp(a.message, b.message);
 }
 
+static bool refresh_home_assistant(const HomeAssistantConfig &config, ConnectionSnapshot &snapshot)
+{
+    HttpsClient http(config.address.c_str(), 512 * 1024);
+    HttpsReq_t req{}; req.path = "/api/states"; req.token = config.token.c_str(); req.timeout_ms = 6000;
+    const auto result = http.send(req);
+    snapshot.connected = false; snapshot.devices = 0;
+    if (!result.ok()) {
+        if (result.http_status == 401 || result.http_status == 403)
+            snprintf(snapshot.message, sizeof(snapshot.message), "Токен Home Assistant отклонён. Проверьте токен и права пользователя.");
+        else if (result.transport_error == ESP_ERR_INVALID_SIZE)
+            snprintf(snapshot.message, sizeof(snapshot.message), "Список Home Assistant превышает 512 КБ.");
+        else snprintf(snapshot.message, sizeof(snapshot.message), "Нет связи: %s, HTTP %d. Проверьте адрес и сеть.", esp_err_to_name(result.transport_error), result.http_status);
+        return false;
+    }
+    std::vector<Device> devices;
+    if (!parseHomeAssistantStates(result.body, result.body_len, devices)) {
+        snprintf(snapshot.message, sizeof(snapshot.message), "Некорректный ответ Home Assistant"); return false;
+    }
+    const auto count = devices.size();
+    if (device_manager.replaceSource(DeviceSource::HomeAssistant, std::move(devices)) != ESP_OK) {
+        snprintf(snapshot.message, sizeof(snapshot.message), "Не удалось обновить список Home Assistant"); return false;
+    }
+    snapshot.connected = true; snapshot.devices = static_cast<unsigned>(count);
+    snprintf(snapshot.message, sizeof(snapshot.message), "%s", config.address.c_str());
+    return true;
+}
+
+static bool send_home_assistant(const Device &device, const DeviceAction &action,
+                                const HomeAssistantConfig &config, std::string &message)
+{
+    std::string path, body;
+    if (!buildHomeAssistantAction(device, action, path, body)) {
+        message = "Команда недоступна для этого устройства"; return false;
+    }
+    HttpsClient http(config.address.c_str(), 512 * 1024);
+    HttpsReq_t req{}; req.path = path.c_str(); req.token = config.token.c_str();
+    req.method = HTTP_METHOD_POST; req.body = body.c_str(); req.timeout_ms = 6000;
+    const auto result = http.send(req);
+    // Service calls are never replayed after a timeout: the device may have acted already.
+    if (!result.ok()) {
+        char text[160]; snprintf(text, sizeof(text), "Home Assistant: %s, HTTP %d. Проверьте состояние устройства.", esp_err_to_name(result.transport_error), result.http_status);
+        message = text; return false;
+    }
+    message = "Команда принята Home Assistant"; return true;
+}
+
 static void device_sync_task(void *)
 {
     uint8_t mac[6]{}; esp_read_mac(mac, ESP_MAC_ETH);
@@ -163,86 +218,138 @@ static void device_sync_task(void *)
     YandexAuth auth(CONFIG_HOME_PANEL_OAUTH_CLIENT_ID, CONFIG_HOME_PANEL_OAUTH_CLIENT_SECRET,
                     device_id, oauth_request, saveAuthSession);
     std::string saved;
-    const bool storage_ok = loadAuthSession(saved);
-    if (storage_ok) auth.restore(saved);
-    bool cached_devices = false, published = false;
-    uint64_t next_sync = 0;
+    if (loadAuthSession(saved)) auth.restore(saved);
+    HomeAssistantConfig ha;
+    ConnectionSnapshot connection, previous_connection;
+    const bool ha_storage_ok = loadHomeAssistantConfig(ha);
+    connection.configured = !ha.address.empty();
+    snprintf(connection.address, sizeof(connection.address), "%s", ha.address.c_str());
+    if (!ha_storage_ok) snprintf(connection.message, sizeof(connection.message), "Не удалось прочитать настройки Home Assistant");
+    bool published = false, connection_published = false, was_authorized = auth.authorized();
+    bool was_online = false;
+    uint64_t next_yandex = 0, next_ha = 0;
     AuthSnapshot previous;
-    std::string last_status;
-    auto status = [&](const std::string &text, bool error, bool finished = false) {
-        if (text != last_status || finished) {
-            ui_manager.setControlResult(&device_manager, text.c_str(), error, finished);
-            last_status = text;
-        }
-    };
     while (true) {
         const auto now = static_cast<uint64_t>(esp_timer_get_time() / 1000000);
+        const bool online = network_ready();
+        bool changed = false, request_yandex = false, request_ha = false;
+        std::string result_message;
+        bool result_error = false;
         AuthAction command;
         const bool auth_command_received = xQueueReceive(auth_queue, &command, 0) == pdTRUE;
         if (auth_command_received) {
             if (command == AuthAction::Begin) auth.begin(now);
-            else if (command == AuthAction::Restart) {
-                auth.restart(now);
-                xQueueReset(action_queue); next_sync = 0;
-            }
+            else if (command == AuthAction::Restart) auth.restart(now);
             else if (command == AuthAction::Cancel) {
-                // A confirmation may have finished while Cancel was queued.
                 if (auth.authorized()) auth.logout(); else auth.cancel();
-            }
-            else if (auth.logout()) { xQueueReset(action_queue); next_sync = 0; }
+            } else auth.logout();
+            next_yandex = 0;
         }
-        auth.tick(now, network_ready());
-        const bool token_ok = network_ready() && auth.ensureToken(now);
-        auth_ready.store(token_ok);
+        ConnectionCommand settings{};
+        if (xQueueReceive(connection_queue, &settings, 0) == pdTRUE) {
+            HomeAssistantConfig updated;
+            bool valid = true;
+            if (settings.action == ConnectionAction::Save) {
+                updated = {settings.address, settings.token};
+                // Reusing a credential is allowed only for the exact same normalized origin.
+                if (updated.token.empty()) {
+                    updated.token = ha.token;
+                    valid = normalizeHomeAssistantConfig(updated) && updated.address == ha.address;
+                } else valid = normalizeHomeAssistantConfig(updated);
+            }
+            if (!valid) snprintf(connection.message, sizeof(connection.message), "Укажите адрес http:// или https:// и токен. При смене адреса нужен новый ввод токена.");
+            else if (!saveHomeAssistantConfig(updated)) snprintf(connection.message, sizeof(connection.message), "Не удалось сохранить настройки Home Assistant");
+            else {
+                ha = std::move(updated); connection = {};
+                connection.configured = !ha.address.empty();
+                snprintf(connection.address, sizeof(connection.address), "%s", ha.address.c_str());
+                snprintf(connection.message, sizeof(connection.message), "%s", connection.configured ? "Проверяем подключение..." : "Home Assistant отключён");
+                device_manager.clearSource(DeviceSource::HomeAssistant); changed = true; next_ha = 0;
+            }
+            // Clear the worker's queue copy as soon as settings have been processed.
+            settings = {}; connection_published = false;
+        }
+        auth.tick(now, online);
+        const bool token_ok = online && auth.ensureToken(now);
+        if (was_authorized && !auth.authorized()) {
+            device_manager.clearSource(DeviceSource::Yandex); changed = true; next_yandex = 0;
+        }
+        was_authorized = auth.authorized();
+        auth_ready.store(online && (token_ok || connection.configured));
         DeviceAction action{};
         const bool received = xQueueReceive(action_queue, &action, 0) == pdTRUE;
-        if (!auth.authorized()) {
-            // Drop the previous account's cloud snapshot on logout/expiry.
-            if (cached_devices && device_manager.clearDevices() == ESP_OK) {
-                cached_devices = false;
-                ui_manager.setControlResult(&device_manager, "Аккаунт отключён", false);
+        if (received) {
+            if (action.kind == ActionValue::Refresh) { request_yandex = request_ha = true; result_message = "Состояния обновлены"; }
+            else {
+                const auto device = device_manager.getDeviceById(action.device_id);
+                if (!online) { result_error = true; result_message = "Нет сети. Проверьте Ethernet."; }
+                else if (!device || !device->available) { result_error = true; result_message = "Устройство недоступно. Обновите список."; }
+                else if (device->source == DeviceSource::HomeAssistant) {
+                    request_ha = true;
+                    if (!connection.configured || !connection.connected) { result_error = true; result_message = "Нет подключения к Home Assistant"; }
+                    else result_error = !send_home_assistant(*device, action, ha, result_message);
+                } else {
+                    request_yandex = true;
+                    int http_status = 0;
+                    if (!token_ok) { result_error = true; result_message = "Нужно восстановить вход в Яндекс"; }
+                    else {
+                        result_error = !send_action(action, auth.accessToken(), result_message, http_status);
+                        if (http_status == 401) auth.ensureToken(now, true);
+                    }
+                }
             }
-            status(storage_ok ? "Для подключения устройств откройте раздел Яндекс и войдите по QR" :
-                                "Не удалось прочитать хранилище входа. Откройте раздел Яндекс.", !storage_ok, received);
-            next_sync = 0;
-        } else if (!network_ready()) {
-            status("Нет сети. Ожидание Ethernet...", true, received); next_sync = 0;
-        } else if (!token_ok) {
-            status(auth.snapshot(now).message, true, received); next_sync = 0;
-        } else if (received || now >= next_sync) {
-            std::string action_message;
-            bool action_ok = true;
-            int http_status = 0;
-            if (received && action.kind != ActionValue::Refresh) {
-                // No automatic replay of device commands, even after HTTP 401.
-                action_ok = send_action(action, auth.accessToken(), action_message, http_status);
-                if (http_status == 401) auth.ensureToken(now, true);
+        }
+        if (online && auth.authorized() && token_ok && (request_yandex || now >= next_yandex)) {
+            std::string message; int http_status = 0;
+            bool refreshed = refresh_devices(auth.accessToken(), message, http_status);
+            if (!refreshed && http_status == 401 && auth.ensureToken(now, true))
+                refreshed = refresh_devices(auth.accessToken(), message, http_status);
+            changed |= refreshed;
+            if (!refreshed) {
+                if (http_status == 401 || http_status == 403) { device_manager.clearSource(DeviceSource::Yandex); changed = true; }
+                if (request_yandex) { result_message += ". " + message; result_error = true; }
+                else if (!received) { result_message = message; result_error = true; changed = true; }
             }
-            std::string refresh_message;
-            bool refreshed = false;
-            if (auth.authorized() && auth.ensureToken(now)) {
-                refreshed = refresh_devices(auth.accessToken(), refresh_message, http_status);
-                // GET is idempotent; retry it once after renewing a rejected token.
-                if (!refreshed && http_status == 401 && auth.ensureToken(now, true))
-                    refreshed = refresh_devices(auth.accessToken(), refresh_message, http_status);
-            } else refresh_message = "Нужно восстановить вход в Яндекс";
-            if (refreshed) {
-                const auto message = received && action.kind != ActionValue::Refresh ? action_message : "Состояния обновлены";
-                // Always deliver a successful snapshot, even when status text repeats.
-                ui_manager.setControlResult(&device_manager, message.c_str(), !action_ok, received);
-                last_status = message; cached_devices = true;
-                next_sync = now + CONFIG_HOME_PANEL_REFRESH_SECONDS;
-            } else {
-                if (received && action.kind != ActionValue::Refresh) refresh_message = action_message + ". " + refresh_message;
-                status(refresh_message, true, received);
-                next_sync = now + CONFIG_HOME_PANEL_RETRY_SECONDS;
+            next_yandex = now + (refreshed ? CONFIG_HOME_PANEL_REFRESH_SECONDS : CONFIG_HOME_PANEL_RETRY_SECONDS);
+        } else if (request_yandex && auth.authorized() && !token_ok) {
+            result_message += ". Яндекс недоступен"; result_error = true;
+        }
+        if (online && connection.configured && (request_ha || now >= next_ha)) {
+            const bool refreshed = refresh_home_assistant(ha, connection);
+            if (!refreshed) device_manager.clearSource(DeviceSource::HomeAssistant);
+            changed = true;
+            if (!refreshed && request_ha) { result_message += ". " + std::string(connection.message); result_error = true; }
+            else if (!refreshed && !received) { result_message = connection.message; result_error = true; }
+            next_ha = now + (refreshed ? 5 : CONFIG_HOME_PANEL_RETRY_SECONDS);
+        }
+        if (was_online != online) {
+            next_yandex = next_ha = 0;
+            if (!online) {
+                device_manager.clearSource(DeviceSource::HomeAssistant);
+                device_manager.clearSource(DeviceSource::Yandex);
+                connection.connected = false; connection.devices = 0;
+                if (connection.configured) snprintf(connection.message, sizeof(connection.message), "Нет сети. Проверьте Ethernet.");
+                changed = true;
             }
+            was_online = online;
+        }
+        // Invalidated tokens affect only their own source, even if renewal failed during an action.
+        if (!auth.authorized() && was_authorized) {
+            device_manager.clearSource(DeviceSource::Yandex); was_authorized = false; changed = true;
         }
         const auto snapshot = auth.snapshot(now);
         if (!published || auth_command_received || !same_auth(snapshot, previous)) {
             if (ui_manager.setAuthState(snapshot, &device_manager) == ESP_OK) { previous = snapshot; published = true; }
         }
-        if (!auth.authorized()) auth_ready.store(false);
+        if (!connection_published || connection.configured != previous_connection.configured ||
+            connection.connected != previous_connection.connected || connection.devices != previous_connection.devices ||
+            strcmp(connection.message, previous_connection.message) || strcmp(connection.address, previous_connection.address)) {
+            if (ui_manager.setConnectionState(connection, &device_manager) == ESP_OK) { previous_connection = connection; connection_published = true; }
+        }
+        if (received || changed) {
+            if (!received && result_message.empty()) result_message = !online ? "Нет сети. Ожидание Ethernet..." : "Состояния устройств обновлены";
+            ui_manager.setControlResult(&device_manager, result_message.c_str(), result_error || !online, received);
+        }
         ulTaskNotifyTake(pdTRUE, pdMS_TO_TICKS(1000));
     }
 }
@@ -252,10 +359,13 @@ extern "C" void app_main()
     ESP_LOGI(TAG, "Application starting");
     action_queue = xQueueCreate(1, sizeof(DeviceAction));
     auth_queue = xQueueCreate(4, sizeof(AuthAction));
+    connection_queue = xQueueCreate(1, sizeof(ConnectionCommand));
     ESP_ERROR_CHECK(action_queue ? ESP_OK : ESP_ERR_NO_MEM);
     ESP_ERROR_CHECK(auth_queue ? ESP_OK : ESP_ERR_NO_MEM);
+    ESP_ERROR_CHECK(connection_queue ? ESP_OK : ESP_ERR_NO_MEM);
     ui_manager.setActionHandler(enqueue_action);
     ui_manager.setAuthHandler(enqueue_auth);
+    ui_manager.setConnectionHandler(enqueue_connection);
     ESP_ERROR_CHECK(ui_manager.init());
     eth_event_group = xEventGroupCreate();
     ESP_ERROR_CHECK(eth_event_group ? ESP_OK : ESP_ERR_NO_MEM);

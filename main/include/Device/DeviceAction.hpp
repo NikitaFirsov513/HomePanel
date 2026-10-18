@@ -4,7 +4,7 @@
 #include "esp_err.h"
 #include <type_traits>
 
-enum class ActionValue { Boolean, Number, String, Hsv, Refresh };
+enum class ActionValue { Boolean, Number, String, Hsv, Refresh, Command };
 
 // FreeRTOS queues copy bytes: never put std::string or owning pointers here.
 struct DeviceAction {

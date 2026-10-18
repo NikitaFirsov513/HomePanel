@@ -20,6 +20,7 @@ std::string stringField(const cJSON *object, const char *key)
 esp_err_t buildDeviceAction(const Device &device, const DeviceAction &action, std::string &json)
 {
     json.clear();
+    if (device.source != DeviceSource::Yandex || !device.available) return ESP_ERR_NOT_SUPPORTED;
     if (!memchr(action.device_id, 0, sizeof(action.device_id)) ||
         !memchr(action.type, 0, sizeof(action.type)) ||
         !memchr(action.instance, 0, sizeof(action.instance)) ||

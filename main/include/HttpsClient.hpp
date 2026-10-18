@@ -46,6 +46,7 @@ private:
     char *response_buffer_ = nullptr;
     
     size_t response_length_ = 0;
+    size_t response_capacity_ = HTTPS_RESPONSE_BUFFER_SIZE;
 
     char auth_buffer_[1024]{};
 
@@ -63,7 +64,7 @@ private:
         esp_http_client_event_t *event);
 
 public:
-    HttpsClient(const char *baseUrl);
+    HttpsClient(const char *baseUrl, size_t response_capacity = HTTPS_RESPONSE_BUFFER_SIZE);
     ~HttpsClient();
     HttpsClient(const HttpsClient &) = delete;
     HttpsClient &operator=(const HttpsClient &) = delete;

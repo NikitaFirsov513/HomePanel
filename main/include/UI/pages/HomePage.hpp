@@ -5,11 +5,12 @@
 #include "DeviceAction.hpp"
 #include "FloorPlanEditor.hpp"
 #include "AccountView.hpp"
+#include "ConnectionsView.hpp"
 #include <array>
 class HomePage : public Page
 {
 public:
-    enum class View { House, Devices, Plan, Account };
+    enum class View { House, Devices, Plan, Connections, Account };
     void navigate(View view);
     View view() const { return view_; }
     void create() override;
@@ -22,10 +23,17 @@ public:
     FloorPlanEditor &editor() { return editor_; }
     void setAuthHandler(AccountView::Handler handler) { account_.setHandler(handler); }
     void updateAuth(const AuthSnapshot &snapshot);
+    void setConnectionHandler(ConnectionsView::Handler handler) { connections_.setHandler(handler); }
+    void updateConnection(const ConnectionSnapshot &snapshot);
 
 private:
     View view_ = View::House;
     bool authorized_ = false;
+    bool yandex_authorized_ = false, ha_configured_ = false, ha_connected_ = false;
+    void refreshConnectionsBadge();
+    bool acceptsSource(const Device &device) const;
+    void pruneSources();
+    std::string pending_device_id_;
     bool auth_seen_ = false;
     AuthState auth_state_ = AuthState::SignedOut;
     lv_obj_t *navigation_ = nullptr, *auth_badge_ = nullptr, *auth_badge_text_ = nullptr;
@@ -55,4 +63,5 @@ private:
     void bind(lv_obj_t *widget, Binding *binding, lv_event_code_t code);
     FloorPlanEditor editor_;
     AccountView account_;
+    ConnectionsView connections_;
 };

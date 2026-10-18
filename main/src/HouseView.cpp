@@ -174,7 +174,7 @@ const PlanRoom *HouseView::room(uint32_t id) const
 }
 const Device *HouseView::device(const std::string &id) const
 {
-    for (const auto &d : devices_) if ("yandex:" + d.id == id) return &d;
+    for (const auto &d : devices_) if (devicePlanKey(d) == id) return &d;
     return nullptr;
 }
 bool HouseView::visible(const PlanPlacement &p) const {
@@ -231,7 +231,7 @@ void HouseView::chooseDevice(size_t index)
     lv_label_set_text_fmt(status_, "%s / %s / %s", name.c_str(), r ? r->name.c_str() : "", levelNames[static_cast<int>(p.level)]);
     lv_obj_invalidate(canvas_);
     if (current && device_handler_) device_handler_(context_, p.device_id);
-    else lv_label_set_text(status_, "Устройство сохранено на плане, но не найдено в текущем списке Яндекса");
+    else lv_label_set_text(status_, "Устройство сохранено на плане, но не найдено в текущих подключениях");
 }
 void HouseView::showChooser(const std::vector<size_t> &indices)
 {

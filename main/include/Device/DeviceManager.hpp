@@ -26,5 +26,7 @@ public:
     esp_err_t getDevices(std::vector<Device> &devices);
     esp_err_t createDevicesFromJson(cJSON *root);
     esp_err_t clearDevices();
+    esp_err_t replaceSource(DeviceSource source, std::vector<Device> devices);
+    esp_err_t clearSource(DeviceSource source) { return replaceSource(source, {}); }
     std::optional<Device> getDeviceById(const std::string &id);
 };

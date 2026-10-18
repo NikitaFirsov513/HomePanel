@@ -5,21 +5,22 @@
 #include "esp_log.h"
 #include "esp_heap_caps.h"
 
-HttpsClient::HttpsClient(const char *baseUrl)
+HttpsClient::HttpsClient(const char *baseUrl, size_t response_capacity)
 {
     esp_http_client_config_t config{};
 
-    if (baseUrl == nullptr || baseUrl[0] == '\0')
+    if (baseUrl == nullptr || baseUrl[0] == '\0' || response_capacity < 2 || response_capacity > 512 * 1024)
     {
         isFail = true;
         return;
     }
     this->baseUrl = baseUrl;
+    response_capacity_ = response_capacity;
 
     response_buffer_ =
         static_cast<char *>(
             heap_caps_malloc(
-                HTTPS_RESPONSE_BUFFER_SIZE,
+                response_capacity_,
                 MALLOC_CAP_SPIRAM |
                     MALLOC_CAP_8BIT));
 
@@ -249,7 +250,7 @@ esp_err_t HttpsClient::event_handler(
          * оставляем для '\0'
          */
         size_t free_space =
-            HTTPS_RESPONSE_BUFFER_SIZE -
+            self->response_capacity_ -
             self->response_length_ -
             1;
 
@@ -260,7 +261,7 @@ esp_err_t HttpsClient::event_handler(
             ESP_LOGE(
                 "HTTPS",
                 "Response too large. Buffer=%u bytes",
-                HTTPS_RESPONSE_BUFFER_SIZE);
+                static_cast<unsigned>(self->response_capacity_));
 
             return ESP_FAIL;
         }

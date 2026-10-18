@@ -68,7 +68,7 @@ void UiManager::ui_process_message(const UiMessage &msg)
     std::vector<Device> devices;
     bool snapshot_available = true;
     if (msg.type == UiMessageType::SET_HOME_PAGE || msg.type == UiMessageType::CONTROL_RESULT ||
-        (msg.type == UiMessageType::AUTH_STATE && msg.auth.authorized)) {
+        msg.type == UiMessageType::AUTH_STATE || msg.type == UiMessageType::CONNECTION_STATE) {
         if (!msg.device_manager || msg.device_manager->getDevices(devices) != ESP_OK) {
             ESP_LOGW(TAG, "Cannot obtain device snapshot");
             if (msg.type == UiMessageType::SET_HOME_PAGE) return;
@@ -79,7 +79,11 @@ void UiManager::ui_process_message(const UiMessage &msg)
     switch (msg.type) {
     case UiMessageType::AUTH_STATE:
         home_page_.updateAuth(msg.auth);
-        if (msg.auth.authorized && snapshot_available) home_page_.update(devices);
+        if (snapshot_available) home_page_.update(devices);
+        break;
+    case UiMessageType::CONNECTION_STATE:
+        home_page_.updateConnection(msg.connection);
+        if (snapshot_available) home_page_.update(devices);
         break;
     case UiMessageType::SET_LOAD_PAGE:
     case UiMessageType::SET_ERROR_PAGE:
@@ -154,4 +158,11 @@ esp_err_t UiManager::setAuthState(const AuthSnapshot &snapshot, DeviceManager *d
 bool UiManager::ui_send(const UiMessage &msg)
 {
     return ui_queue_ && xQueueSend(ui_queue_, &msg, pdMS_TO_TICKS(100)) == pdTRUE;
+}
+
+esp_err_t UiManager::setConnectionState(const ConnectionSnapshot &snapshot, DeviceManager *devices)
+{
+    UiMessage msg{}; msg.type = UiMessageType::CONNECTION_STATE; msg.connection = snapshot;
+    msg.device_manager = devices;
+    return ui_send(msg) ? ESP_OK : ESP_FAIL;
 }

@@ -33,6 +33,12 @@ target_compile_features(yandex_auth_tests PRIVATE cxx_std_17)
 target_include_directories(yandex_auth_tests PRIVATE ../main/include "${CJSON_ROOT}")
 add_test(NAME yandex_auth COMMAND yandex_auth_tests)
 
+add_executable(home_assistant_tests home_assistant_test.cpp ../main/src/HomeAssistant.cpp
+    ../main/src/DeviceManager.cpp "${CJSON_ROOT}/cJSON.c")
+target_compile_features(home_assistant_tests PRIVATE cxx_std_17)
+target_include_directories(home_assistant_tests PRIVATE stubs ../main/include ../main/include/Device "${CJSON_ROOT}")
+add_test(NAME home_assistant COMMAND home_assistant_tests)
+
 add_executable(floor_plan_tests floor_plan_test.cpp ../main/src/FloorPlan.cpp ../main/src/HouseProjection.cpp "${CJSON_ROOT}/cJSON.c")
 target_compile_features(floor_plan_tests PRIVATE cxx_std_17)
 target_include_directories(floor_plan_tests PRIVATE ../main/include/UI "${CJSON_ROOT}")
@@ -58,6 +64,7 @@ if(HOME_PANEL_UI_TESTS)
     add_executable(home_page_tests home_page_test.cpp ../main/src/HomePage.cpp ../main/src/DeviceIcon.cpp
         ../main/src/FloorPlan.cpp ../main/src/FloorPlanEditor.cpp ../main/src/PlanStorage.cpp
         ../main/src/HouseProjection.cpp ../main/src/HouseView.cpp ../main/src/AccountView.cpp
+        ../main/src/ConnectionsView.cpp
         ../main/src/DeviceManager.cpp ../main/fonts/font_roboto_20.c "${CJSON_ROOT}/cJSON.c")
     target_compile_features(home_page_tests PRIVATE cxx_std_17)
     target_include_directories(home_page_tests PRIVATE stubs ../main/include ../main/include/Device
@@ -72,7 +79,7 @@ if(MSVC)
     file(GLOB_RECURSE project_headers CONFIGURE_DEPENDS
         "${CMAKE_CURRENT_LIST_DIR}/../main/include/*.hpp"
         "${CMAKE_CURRENT_LIST_DIR}/stubs/*.h")
-    foreach(test_target device_manager_tests https_client_tests yandex_auth_tests floor_plan_tests dma_compat_tests home_page_tests)
+    foreach(test_target device_manager_tests https_client_tests yandex_auth_tests home_assistant_tests floor_plan_tests dma_compat_tests home_page_tests)
         if(TARGET ${test_target})
             get_target_property(test_sources ${test_target} SOURCES)
             set_property(SOURCE ${test_sources} APPEND PROPERTY OBJECT_DEPENDS ${project_headers})

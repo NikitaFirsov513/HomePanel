@@ -29,7 +29,7 @@ lv_obj_t *label(lv_obj_t *parent, const char *text, uint32_t color = INK)
     lv_obj_set_style_text_color(obj, lv_color_hex(color), 0);
     return obj;
 }
-std::string key(const Device &d) { return "yandex:" + d.id; }
+std::string key(const Device &d) { return devicePlanKey(d); }
 const char *levels[] = {"Снизу", "Центр", "Сверху"};
 }
 
@@ -173,7 +173,7 @@ void FloorPlanEditor::setAuthenticated(bool value)
 void FloorPlanEditor::setTool(Tool tool)
 {
     if (tool == Tool::Device && (!authenticated_ || devices_.empty())) {
-        message(authenticated_ ? "Обновите список устройств Яндекса" : "Сначала войдите в Яндекс", true); return;
+        message(authenticated_ ? "Обновите список устройств" : "Сначала настройте подключения", true); return;
     }
     tool_ = tool; gesture_ = Gesture::None;
     for (size_t i = 0; i < tool_buttons_.size(); ++i) {
@@ -207,7 +207,7 @@ void FloorPlanEditor::refreshSidebar()
     if (placement) {
         const bool available = deviceAvailable(placement->device_id);
         label(sidebar_, placement->name.c_str(), available ? INK : MUTED);
-        label(sidebar_, available ? "Доступно в Яндексе" : !authenticated_ ? "Требуется вход в Яндекс" : "Нет в текущем аккаунте", available ? 0x2D8669 : 0xAE6342);
+        label(sidebar_, available ? "Устройство подключено" : !authenticated_ ? "Проверьте подключения" : "Нет в текущих подключениях", available ? 0x2D8669 : 0xAE6342);
         room = plan_.room(placement->room_id);
         if (room) label(sidebar_, room->name.c_str(), MUTED);
     } else if (selected_opening_) {
@@ -266,7 +266,7 @@ void FloorPlanEditor::refreshSidebar()
             editor->clearSelection();
             editor->message("Коснитесь нужного места внутри комнаты.");
         }, LV_EVENT_VALUE_CHANGED, this);
-        if (devices_.empty()) label(sidebar_, authenticated_ ? "Нет устройств в текущем аккаунте" : "Добавление доступно после входа в Яндекс", MUTED);
+        if (devices_.empty()) label(sidebar_, authenticated_ ? "Нет устройств в подключениях" : "Сначала подключите систему умного дома", MUTED);
     }
     if (!room && !placement && !selected_opening_ && tool_ != Tool::Device)
         label(sidebar_, "Выберите объект на плане. Комнаты и устройства можно перетаскивать пальцем.", MUTED);
@@ -447,7 +447,7 @@ void FloorPlanEditor::pointerDown(int x, int y)
         lv_obj_invalidate(canvas_); return;
     }
     if (tool_ == Tool::Device) {
-        if (!authenticated_) { message("Сначала войдите в Яндекс", true); return; }
+        if (!authenticated_) { message("Сначала настройте подключения", true); return; }
         const auto it = std::find_if(devices_.begin(), devices_.end(), [&](const Device &d) { return key(d) == pending_device_; });
         const auto *room = roomAt(start_gx_, start_gy_);
         if (it == devices_.end()) { message("Сначала выберите устройство справа", true); return; }
@@ -484,8 +484,8 @@ void FloorPlanEditor::pointerDown(int x, int y)
         if ((pos.x - x) * (pos.x - x) + (pos.y - y) * (pos.y - y) <= 22 * 22) {
             selected_device_ = p.device_id; draft_device_ = p; pending_level_ = p.level;
             gesture_ = deviceAvailable(p.device_id) ? Gesture::MoveDevice : Gesture::None;
-            if (gesture_ == Gesture::None) message(authenticated_ ? "Устройство отсутствует в текущем аккаунте Яндекса." :
-                "Сохранённая привязка. Войдите в Яндекс, чтобы проверить устройство.");
+            if (gesture_ == Gesture::None) message(authenticated_ ? "Устройство отсутствует в текущих подключениях." :
+                "Сохранённая привязка. Проверьте подключения устройства.");
             refreshSidebar(); lv_obj_invalidate(canvas_); return;
         }
     }

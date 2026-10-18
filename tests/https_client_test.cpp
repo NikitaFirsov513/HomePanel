@@ -138,5 +138,14 @@ int main()
         CHECK(https.send(request).transport_error == ESP_ERR_INVALID_SIZE);
     }
     CHECK(client == nullptr);
+    {
+        HttpsClient http("http://homeassistant.local:8123", 512 * 1024);
+        HttpsReq_t req{}; req.path = "/api/states"; req.token = "local-test";
+        payload.assign(128 * 1024, 'x');
+        CHECK(http.send(req).ok());
+        CHECK(client->url == "http://homeassistant.local:8123/api/states");
+        payload.assign(512 * 1024, 'x');
+        CHECK(http.send(req).transport_error == ESP_ERR_INVALID_SIZE);
+    }
     std::puts("HTTPS client regression tests passed");
 }

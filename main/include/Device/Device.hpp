@@ -6,7 +6,9 @@
 #include "DeviceMode.hpp"
 #include "DeviceColorSetting.hpp"
 
-enum class ControlKind { Toggle, Range, Mode, Rgb, Hsv };
+enum class ControlKind { Toggle, Range, Mode, Rgb, Hsv, Command };
+enum class DeviceSource { Yandex, HomeAssistant };
+inline const char *sourceName(DeviceSource source) { return source == DeviceSource::Yandex ? "Яндекс" : "Home Assistant"; }
 
 struct ControlOption {
     std::string value;
@@ -34,6 +36,9 @@ public:
     std::string name;
     std::string type;
     std::string room;
+    DeviceSource source = DeviceSource::Yandex;
+    std::string native_id;
+    bool available = true;
     std::vector<DeviceControl> controls;
     std::vector<std::string> readings;
 
@@ -47,3 +52,8 @@ public:
     Device() = default;
     ~Device() = default;
 };
+
+// Keep existing Yandex placements compatible with plans already saved on the panel.
+inline std::string devicePlanKey(const Device &device) {
+    return device.source == DeviceSource::Yandex ? "yandex:" + device.id : device.id;
+}

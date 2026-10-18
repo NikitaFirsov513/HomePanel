@@ -13,6 +13,9 @@ static bool accept = true;
 static int auth_calls = 0;
 static AuthAction auth_action = AuthAction::Begin;
 static bool authCommand(AuthAction action) { ++auth_calls; auth_action = action; return true; }
+static int connection_calls = 0;
+static ConnectionCommand last_connection;
+static bool connectionCommand(const ConnectionCommand &command) { ++connection_calls; last_connection = command; return true; }
 static bool send(const DeviceAction &action) { if (!accept) return false; ++calls; last = action; return true; }
 static lv_obj_t *find(lv_obj_t *root, const lv_obj_class_t *type)
 {
@@ -106,7 +109,10 @@ int main()
         CHECK(!textButton(page.root(), lamp.name.c_str())); // Cloud data is gated by login.
         auto &default_house = page.editor().house();
         CHECK(default_house.root() && lv_obj_is_visible(default_house.root()));
-        auto *account_button = textButton(page.root(), "Яндекс"); CHECK(account_button);
+        auto *connections_button = textButton(page.root(), "Подключения"); CHECK(connections_button);
+        lv_obj_send_event(connections_button, LV_EVENT_CLICKED, nullptr);
+        snapshot(display, "connections.ppm");
+        auto *account_button = textButton(page.root(), "Открыть аккаунт"); CHECK(account_button);
         lv_obj_send_event(account_button, LV_EVENT_CLICKED, nullptr);
         auto *account_title = textButton(page.root(), "Аккаунт Яндекса"); CHECK(account_title);
         checkGlyphs(account_title);
@@ -150,7 +156,7 @@ int main()
         page.setStatus("Нет подключения к сети", true);
         CHECK(textButton(default_house.root(), "Нет подключения к сети"));
         page.updateAuth(connected); page.update(devices);
-        CHECK(textButton(page.root(), "Яндекс: вход выполнен"));
+        CHECK(textButton(page.root(), "Подключено: 1 из 2"));
         auto *open_list = textButton(page.root(), "Устройства"); CHECK(open_list);
         lv_obj_send_event(open_list, LV_EVENT_CLICKED, nullptr);
         CHECK(!lv_obj_is_visible(default_house.root()));
@@ -396,7 +402,7 @@ int main()
         editor.pointerDown(offline_point.x, offline_point.y); editor.pointerUp(offline_point.x, offline_point.y);
         CHECK(editor.plan().serialize() == preserved_plan);
         page.navigate(HomePage::View::House);
-        CHECK(lv_obj_is_visible(textButton(page.root(), "Яндекс: вход не выполнен")));
+        CHECK(lv_obj_is_visible(textButton(page.root(), "Нет подключений")));
         snapshot(display, "house-signed-out.ppm");
         page.navigate(HomePage::View::Plan); editor.setTool(FloorPlanEditor::Tool::Select);
         const auto &saved_pin = editor.plan().document().devices.front();
@@ -404,7 +410,7 @@ int main()
         const auto ghost = editor.gridPoint(saved_room->rect.x + saved_room->rect.w * saved_pin.u / 1000.0,
                                            saved_room->rect.y + saved_room->rect.h * saved_pin.v / 1000.0);
         editor.pointerDown(ghost.x, ghost.y); editor.pointerUp(ghost.x, ghost.y);
-        CHECK(textButton(editor.root(), "Требуется вход в Яндекс"));
+        CHECK(textButton(editor.root(), "Проверьте подключения"));
         snapshot(display, "floor-plan-signed-out.ppm");
         CHECK(editor.plan().serialize() == preserved_plan);
         page.updateAuth(connected); page.update({speaker});
@@ -465,6 +471,88 @@ int main()
         isolated.hide();
 
 
+    }
+    {
+        HomePage page;
+        page.setActionHandler(send); page.setConnectionHandler(connectionCommand);
+        page.update({}); lv_screen_load(page.root());
+        Device ha; ha.source = DeviceSource::HomeAssistant; ha.id = "ha:light.test"; ha.native_id = "light.test";
+        ha.name = "Свет Home Assistant"; ha.type = "devices.types.light";
+        DeviceControl power; power.type = "ha.on"; power.instance = "on"; power.known = true; ha.controls = {power};
+        Device ya = ha; ya.source = DeviceSource::Yandex; ya.id = "yandex-test"; ya.name = "Свет Яндекса";
+        ConnectionSnapshot connection; connection.configured = true; connection.connected = true; connection.devices = 1;
+        std::snprintf(connection.address, sizeof(connection.address), "http://192.168.1.20:8123");
+        page.updateConnection(connection); page.update({ya, ha}); page.navigate(HomePage::View::Devices);
+        CHECK(textButton(page.root(), ha.name.c_str()) && !textButton(page.root(), ya.name.c_str()));
+        auto *card = textButton(page.root(), ha.name.c_str()); CHECK(card);
+        lv_obj_send_event(card, LV_EVENT_CLICKED, nullptr);
+        const auto previous_calls = calls;
+        auto *on = textButton(page.root(), "Включить"); CHECK(on);
+        lv_obj_send_event(on, LV_EVENT_CLICKED, nullptr);
+        CHECK(calls == previous_calls + 1 && !std::strcmp(last.device_id, "ha:light.test") && !std::strcmp(last.type, "ha.on"));
+        page.setStatus("Команда принята", false); page.update({ha});
+        auto *done = textButton(page.root(), "Готово"); CHECK(done); lv_obj_send_event(done, LV_EVENT_CLICKED, nullptr);
+        AuthSnapshot yandex; yandex.authorized = true; yandex.state = AuthState::Authorized;
+        page.updateAuth(yandex); page.update({ya, ha}); CHECK(textButton(page.root(), "Устройств: 2"));
+        page.navigate(HomePage::View::Connections);
+        CHECK(textButton(page.root(), "Подключено: 2 из 2"));
+        snapshot(display, "connections-both.ppm");
+        page.navigate(HomePage::View::Devices);
+        card = textButton(page.root(), ha.name.c_str()); CHECK(card);
+        lv_obj_send_event(card, LV_EVENT_CLICKED, nullptr);
+        on = textButton(page.root(), "Включить"); CHECK(on); lv_obj_send_event(on, LV_EVENT_CLICKED, nullptr);
+        CHECK(page.busy());
+        page.updateAuth(AuthSnapshot{});
+        CHECK(page.busy()); // Disconnecting Yandex must not release an outstanding HA command.
+        page.setStatus("Команда принята", false); page.update({ya, ha});
+        done = textButton(page.root(), "Готово"); CHECK(done); lv_obj_send_event(done, LV_EVENT_CLICKED, nullptr);
+        page.updateAuth(yandex); page.update({ya, ha});
+        auto *pressed = textButton(page.root(), ha.name.c_str()); CHECK(pressed); lv_obj_add_state(pressed, LV_STATE_PRESSED);
+        page.updateAuth(AuthSnapshot{}); // A Yandex logout must keep HA, including while a card is pressed.
+        CHECK(textButton(page.root(), ha.name.c_str()) && !textButton(page.root(), ya.name.c_str()));
+        page.update({ya, ha}); CHECK(textButton(page.root(), "Устройств: 1"));
+        page.updateAuth(yandex); page.update({ya, ha});
+        page.updateConnection(ConnectionSnapshot{}); // HA disconnect must keep Yandex.
+        CHECK(textButton(page.root(), ya.name.c_str()) && !textButton(page.root(), ha.name.c_str()));
+        page.update({ya, ha}); CHECK(textButton(page.root(), "Устройств: 1"));
+        page.navigate(HomePage::View::Connections);
+        auto *settings = textButton(page.root(), "Настроить"); CHECK(settings); lv_obj_send_event(settings, LV_EVENT_CLICKED, nullptr);
+        auto *form = textButton(page.root(), "Настройка Home Assistant"); CHECK(form);
+        auto *address = find(form, &lv_textarea_class); CHECK(address);
+        lv_obj_t *token = nullptr;
+        for (uint32_t i = 0; i < lv_obj_get_child_count(form); ++i) {
+            auto *child = lv_obj_get_child(form, i);
+            if (child != address && lv_obj_check_type(child, &lv_textarea_class)) token = child;
+        }
+        CHECK(token && lv_textarea_get_password_mode(token));
+        auto *keyboard = find(form, &lv_keyboard_class); CHECK(keyboard);
+        lv_obj_update_layout(form);
+        lv_area_t keyboard_area; lv_obj_get_coords(keyboard, &keyboard_area);
+        CHECK(lv_obj_is_visible(keyboard) && keyboard_area.y1 >= 64 && keyboard_area.y2 < 600);
+        lv_obj_send_event(token, LV_EVENT_FOCUSED, nullptr);
+        CHECK(lv_keyboard_get_textarea(keyboard) == token);
+        lv_textarea_set_text(address, "http://192.168.1.20:8123"); lv_textarea_set_text(token, "test-only-token");
+        snapshot(display, "home-assistant-settings.ppm");
+        auto *connect = textButton(form, "Подключить"); CHECK(connect); lv_obj_send_event(connect, LV_EVENT_CLICKED, nullptr);
+        CHECK(connection_calls == 1 && last_connection.action == ConnectionAction::Save);
+        CHECK(!std::strcmp(last_connection.address, "http://192.168.1.20:8123") && !std::strcmp(last_connection.token, "test-only-token"));
+        CHECK(!lv_textarea_get_text(token)[0]);
+        page.updateConnection(connection);
+        auto *disconnect = textButton(form, "Отключить"); CHECK(disconnect); lv_obj_send_event(disconnect, LV_EVENT_CLICKED, nullptr);
+        CHECK(connection_calls == 2 && last_connection.action == ConnectionAction::Disconnect);
+        page.updateConnection(ConnectionSnapshot{});
+        // Both source IDs survive a perspective render and resolve to their own commands.
+        FloorPlan plan; const auto room = plan.addRoom({2, 2, 12, 9});
+        PlanPlacement pin; pin.device_id = devicePlanKey(ha); pin.name = ha.name; pin.type = ha.type; pin.room_id = room; pin.u = 250;
+        CHECK(plan.placeDevice(pin)); pin.device_id = devicePlanKey(ya); pin.name = ya.name; pin.u = 750; CHECK(plan.placeDevice(pin));
+        HouseView house; std::string picked;
+        house.setHandlers(&picked, [](void *ctx, const std::string &id) { *static_cast<std::string *>(ctx) = id; }, nullptr);
+        house.show(page.root(), plan.document(), {ha, ya});
+        const auto point = house.devicePoint(ha.id); CHECK(point.x > 0);
+        house.pointerDown(point.x, point.y); house.pointerUp(point.x, point.y); CHECK(picked == ha.id);
+        house.update(plan.document(), {ha});
+        CHECK(house.devicePoint(ha.id).x > 0 && house.devicePoint("yandex:" + ya.id).x < 0);
+        house.hide();
     }
     lv_display_delete(display);
     lv_deinit();

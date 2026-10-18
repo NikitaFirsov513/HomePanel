@@ -159,6 +159,7 @@ esp_err_t DeviceManager::createDevicesFromJson(cJSON *root)
             return ESP_ERR_INVALID_ARG;
         Device device;
         device.id = id->valuestring;
+        device.native_id = device.id;
         device.name = name->valuestring;
         device.type = type->valuestring;
         const auto room_id = str(item, "room");
@@ -168,10 +169,24 @@ esp_err_t DeviceManager::createDevicesFromJson(cJSON *root)
         parseControls(device, item);
         parsed.push_back(std::move(device));
     }
+    return replaceSource(DeviceSource::Yandex, std::move(parsed));
+}
+
+esp_err_t DeviceManager::replaceSource(DeviceSource source, std::vector<Device> devices)
+{
+    for (size_t i = 0; i < devices.size(); ++i) {
+        if (devices[i].id.empty() || devices[i].source != source) return ESP_ERR_INVALID_ARG;
+        for (size_t j = 0; j < i; ++j) if (devices[j].id == devices[i].id) return ESP_ERR_INVALID_ARG;
+    }
     if (!mutex_home_devices) return ESP_ERR_NO_MEM;
     DeviceLock lock(mutex_home_devices);
     if (!lock) return ESP_ERR_TIMEOUT;
-    home_devices.swap(parsed);
+    for (const auto &old : home_devices) if (old.source != source)
+        for (const auto &device : devices) if (device.id == old.id) return ESP_ERR_INVALID_ARG;
+    std::vector<Device> merged;
+    for (const auto &old : home_devices) if (old.source != source) merged.push_back(old);
+    merged.insert(merged.end(), std::make_move_iterator(devices.begin()), std::make_move_iterator(devices.end()));
+    home_devices.swap(merged);
     return ESP_OK;
 }
 
