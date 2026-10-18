@@ -5,9 +5,22 @@ if(IDF_VERSION_MAJOR LESS 6)
 endif()
 
 idf_component_register(
-    SRC_DIRS
-    "src"
-    "fonts"
+    SRCS
+    "src/main.cpp"
+    "src/ethernet_init.c"
+    "src/HttpsClient.cpp"
+    "src/DeviceManager.cpp"
+    "src/DeviceAction.cpp"
+    "src/DeviceIcon.cpp"
+    "src/UiManager.cpp"
+    "src/HomePage.cpp"
+    "src/LoadingPage.cpp"
+    "src/FloorPlan.cpp"
+    "src/FloorPlanEditor.cpp"
+    "src/PlanStorage.cpp"
+    "src/HouseProjection.cpp"
+    "src/HouseView.cpp"
+    "fonts/font_roboto_20.c"
 
     INCLUDE_DIRS
     "include"
@@ -27,6 +40,7 @@ idf_component_register(
     esp_event
     esp_eth
     esp_netif
+    nvs_flash
     ${json_requirements}
     mbedtls
 )

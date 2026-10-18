@@ -24,8 +24,9 @@ esp_err_t UiManager::init()
         return ESP_FAIL;
     }
     ESP_ERROR_CHECK(bsp_display_lock(-1));
-    loading_page_.create();
-    lv_screen_load(loading_page_.root());
+    home_page_.update({});
+    home_page_.setStatus("Ожидание подключения к сети...", false);
+    lv_screen_load(home_page_.root());
     bsp_display_unlock();
     bsp_display_backlight_on();
     if (xTaskCreate(ui_task_entry, "ui_task", UI_TASK_STACK, this,
@@ -68,8 +69,8 @@ void UiManager::ui_process_message(const UiMessage &msg)
     switch (msg.type) {
     case UiMessageType::SET_LOAD_PAGE:
     case UiMessageType::SET_ERROR_PAGE:
-        loading_page_.setText(msg.text, msg.type == UiMessageType::SET_LOAD_PAGE);
-        lv_screen_load(loading_page_.root());
+        // The local floor-plan editor remains accessible while offline.
+        home_page_.setStatus(msg.text, msg.type == UiMessageType::SET_ERROR_PAGE, false);
         ESP_LOGI(TAG, "Status screen: %s", msg.text);
         break;
     case UiMessageType::SET_HOME_PAGE:

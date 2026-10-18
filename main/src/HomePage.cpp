@@ -229,6 +229,27 @@ void HomePage::create()
     auto *refresh_binding = new Binding;
     refresh_binding->action.kind = ActionValue::Refresh;
     bind(refresh, refresh_binding, LV_EVENT_CLICKED);
+    auto *plan = button(header, "План дома");
+    lv_obj_set_width(plan, 152);
+    lv_obj_align(plan, LV_ALIGN_RIGHT_MID, -160, 0);
+    lv_obj_set_width(count_, 230);
+    lv_obj_add_event_cb(plan, [](lv_event_t *event) {
+        auto *page = static_cast<HomePage *>(lv_event_get_user_data(event));
+        if (!page->busy_) page->editor_.show(page->root_);
+    }, LV_EVENT_CLICKED, this);
+    editor_.setDeviceHandler([](void *context, const std::string &id) {
+        auto *page = static_cast<HomePage *>(context);
+        if (id.rfind("yandex:", 0) == 0) page->toggleDevice(id.substr(7));
+    }, this);
+    auto *house = button(header, "Дом");
+    lv_obj_set_width(house, 112);
+    lv_obj_align(house, LV_ALIGN_RIGHT_MID, -320, 0);
+    lv_obj_set_style_bg_color(house, lv_color_hex(ACCENT), 0);
+    lv_obj_set_style_text_color(house, lv_color_hex(0xFFFFFF), 0);
+    lv_obj_add_event_cb(house, [](lv_event_t *event) {
+        auto *page = static_cast<HomePage *>(lv_event_get_user_data(event));
+        if (!page->busy_) page->editor_.showHouse(page->root_);
+    }, LV_EVENT_CLICKED, this);
     status_ = label(root_, "Устройства готовы к управлению");
     lv_obj_set_style_text_color(status_, lv_color_hex(MUTED), 0);
     lv_label_set_long_mode(status_, LV_LABEL_LONG_WRAP);
@@ -314,6 +335,7 @@ void HomePage::update(const std::vector<Device> &devices)
     lv_obj_clean(details_);
     lv_obj_clean(list_);
     devices_ = devices;
+    editor_.setDevices(devices_);
     lv_label_set_text_fmt(count_, "Устройств: %u", static_cast<unsigned>(devices.size()));
     lv_obj_update_layout(root_);
     const int width = lv_obj_get_content_width(list_);

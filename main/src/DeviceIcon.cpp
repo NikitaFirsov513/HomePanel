@@ -10,18 +10,11 @@ DeviceIcon deviceIconForType(const std::string &type)
     return DeviceIcon::Generic;
 }
 
-namespace {
-void drawIcon(lv_event_t *event)
+void drawDeviceIcon(lv_layer_t *layer, DeviceIcon icon, const lv_area_t &area, lv_color_t color)
 {
-    auto *obj = static_cast<lv_obj_t *>(lv_event_get_target(event));
-    auto *layer = lv_event_get_layer(event);
-    lv_area_t area;
-    lv_obj_get_coords(obj, &area);
-    const auto icon = static_cast<DeviceIcon>(reinterpret_cast<uintptr_t>(lv_event_get_user_data(event)));
-    const auto color = lv_obj_get_style_text_color(obj, LV_PART_MAIN);
     // All paths use the same 32 x 32 design coordinates; no font or image assets.
-    const int ox = area.x1 + (lv_obj_get_width(obj) - 32) / 2;
-    const int oy = area.y1 + (lv_obj_get_height(obj) - 32) / 2;
+    const int ox = area.x1 + (area.x2 - area.x1 + 1 - 32) / 2;
+    const int oy = area.y1 + (area.y2 - area.y1 + 1 - 32) / 2;
     auto line = [&](int x1, int y1, int x2, int y2) {
         lv_draw_line_dsc_t d; lv_draw_line_dsc_init(&d);
         d.color = color; d.width = 2; d.round_start = 1; d.round_end = 1;
@@ -67,7 +60,6 @@ void drawIcon(lv_event_t *event)
         rect(5, 5, 22, 22, 6); line(11, 12, 21, 12); line(11, 19, 17, 19); break;
     }
 }
-}
 
 lv_obj_t *createDeviceIcon(lv_obj_t *parent, DeviceIcon icon, uint32_t color, int size)
 {
@@ -77,7 +69,13 @@ lv_obj_t *createDeviceIcon(lv_obj_t *parent, DeviceIcon icon, uint32_t color, in
     lv_obj_set_scrollable(obj, false);
     lv_obj_set_clickable(obj, false);
     lv_obj_set_style_text_color(obj, lv_color_hex(color), 0);
-    lv_obj_add_event_cb(obj, drawIcon, LV_EVENT_DRAW_MAIN,
+    lv_obj_add_event_cb(obj, [](lv_event_t *event) {
+        auto *target = static_cast<lv_obj_t *>(lv_event_get_target(event));
+        lv_area_t area; lv_obj_get_coords(target, &area);
+        drawDeviceIcon(lv_event_get_layer(event),
+            static_cast<DeviceIcon>(reinterpret_cast<uintptr_t>(lv_event_get_user_data(event))),
+            area, lv_obj_get_style_text_color(target, LV_PART_MAIN));
+    }, LV_EVENT_DRAW_MAIN,
                         reinterpret_cast<void *>(static_cast<uintptr_t>(icon)));
     return obj;
 }

@@ -33,7 +33,8 @@ static bool network_ready()
 static bool enqueue_action(const DeviceAction &action)
 {
     // Called by LVGL: no HTTP, waiting, or model mutexes on the display thread.
-    return action_queue && xQueueSend(action_queue, &action, 0) == pdTRUE;
+    return action_queue && eth_event_group && network_ready() && CONFIG_HOME_PANEL_YANDEX_TOKEN[0] &&
+           xQueueSend(action_queue, &action, 0) == pdTRUE;
 }
 
 static void eth_event_handler(void *, esp_event_base_t, int32_t event_id, void *)
@@ -169,7 +170,7 @@ static void device_sync_task(void *)
             if (received && action.kind != ActionValue::Refresh) {
                 message = action_message + ". Состояние не обновлено: " + refresh_message;
             }
-            if (home_shown) ui_manager.setControlResult(&device_manager, message.c_str(), true, received);
+            if (home_shown || received) ui_manager.setControlResult(&device_manager, message.c_str(), true, received);
             else ui_manager.setErrorPage(message.c_str());
             delay_seconds = CONFIG_HOME_PANEL_RETRY_SECONDS;
             ESP_LOGW(TAG, "Device update failed");

@@ -3,6 +3,7 @@
 #include "lvgl.h"
 #include "DeviceManager.hpp"
 #include "DeviceAction.hpp"
+#include "FloorPlanEditor.hpp"
 class HomePage : public Page
 {
 public:
@@ -13,6 +14,7 @@ public:
     void setActionHandler(ActionHandler handler) { handler_ = handler; }
     void setStatus(const char *text, bool error, bool finished = true);
     bool busy() const { return busy_; }
+    FloorPlanEditor &editor() { return editor_; }
 
 private:
     lv_obj_t *list_ = nullptr;
@@ -37,4 +39,5 @@ private:
     static void controlEvent(lv_event_t *event);
     void submit(const DeviceAction &action);
     void bind(lv_obj_t *widget, Binding *binding, lv_event_code_t code);
+    FloorPlanEditor editor_;
 };

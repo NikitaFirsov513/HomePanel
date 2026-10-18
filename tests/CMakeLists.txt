@@ -28,6 +28,11 @@ target_compile_features(https_client_tests PRIVATE cxx_std_17)
 target_include_directories(https_client_tests PRIVATE stubs ../main/include)
 add_test(NAME https_client COMMAND https_client_tests)
 
+add_executable(floor_plan_tests floor_plan_test.cpp ../main/src/FloorPlan.cpp ../main/src/HouseProjection.cpp "${CJSON_ROOT}/cJSON.c")
+target_compile_features(floor_plan_tests PRIVATE cxx_std_17)
+target_include_directories(floor_plan_tests PRIVATE ../main/include/UI "${CJSON_ROOT}")
+add_test(NAME floor_plan COMMAND floor_plan_tests)
+
 if(EXISTS "$ENV{IDF_PATH}/components/esp_driver_dma/include/esp_async_color_convert.h")
     add_executable(dma_compat_tests dma_compat_test.cpp)
     target_compile_features(dma_compat_tests PRIVATE cxx_std_17)
@@ -46,10 +51,26 @@ if(HOME_PANEL_UI_TESTS)
     add_subdirectory(../managed_components/lvgl__lvgl lvgl)
     target_compile_definitions(lvgl PUBLIC LV_USE_STDLIB_MALLOC=1 LV_USE_STDLIB_SPRINTF=1)
     add_executable(home_page_tests home_page_test.cpp ../main/src/HomePage.cpp ../main/src/DeviceIcon.cpp
+        ../main/src/FloorPlan.cpp ../main/src/FloorPlanEditor.cpp ../main/src/PlanStorage.cpp
+        ../main/src/HouseProjection.cpp ../main/src/HouseView.cpp
         ../main/src/DeviceManager.cpp ../main/fonts/font_roboto_20.c "${CJSON_ROOT}/cJSON.c")
     target_compile_features(home_page_tests PRIVATE cxx_std_17)
     target_include_directories(home_page_tests PRIVATE stubs ../main/include/Device
         ../main/include/UI ../main/include/UI/pages "${CJSON_ROOT}")
     target_link_libraries(home_page_tests PRIVATE lvgl)
     add_test(NAME home_page COMMAND home_page_tests)
+endif()
+
+# Some localized MSVC installations yield empty /showIncludes dependency files.
+# Track project headers explicitly so native tests cannot reuse an old class ABI.
+if(MSVC)
+    file(GLOB_RECURSE project_headers CONFIGURE_DEPENDS
+        "${CMAKE_CURRENT_LIST_DIR}/../main/include/*.hpp"
+        "${CMAKE_CURRENT_LIST_DIR}/stubs/*.h")
+    foreach(test_target device_manager_tests https_client_tests floor_plan_tests dma_compat_tests home_page_tests)
+        if(TARGET ${test_target})
+            get_target_property(test_sources ${test_target} SOURCES)
+            set_property(SOURCE ${test_sources} APPEND PROPERTY OBJECT_DEPENDS ${project_headers})
+        endif()
+    endforeach()
 endif()
