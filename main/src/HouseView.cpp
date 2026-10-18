@@ -126,12 +126,7 @@ void HouseView::create(lv_obj_t *parent)
     lv_obj_set_size(root_, lv_display_get_horizontal_resolution(lv_obj_get_display(parent)), lv_display_get_vertical_resolution(lv_obj_get_display(parent)));
     lv_obj_set_pos(root_, -lv_obj_get_style_pad_left(parent, LV_PART_MAIN), -lv_obj_get_style_pad_top(parent, LV_PART_MAIN));
     lv_obj_set_style_pad_all(root_, 16, 0); lv_obj_set_style_pad_row(root_, 10, 0); lv_obj_set_flex_flow(root_, LV_FLEX_FLOW_COLUMN);
-    auto *header = lv_obj_create(root_); surface(header, 0xF3F4F8, 0); lv_obj_set_size(header, LV_PCT(100), 44);
-    lv_obj_set_flex_flow(header, LV_FLEX_FLOW_ROW); lv_obj_set_style_pad_column(header, 12, 0);
-    lv_obj_set_flex_align(header, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
-    auto *title = label(header, "Мой дом"); lv_obj_set_width(title, 130);
-    auto *subtitle = label(header, "Объёмный вид", MUTED); lv_obj_set_width(subtitle, 0); lv_obj_set_flex_grow(subtitle, 1);
-    button(header, "Яндекс", Account); button(header, "Редактор 2D", Edit); button(header, "Список", Close);
+    lv_obj_set_style_pad_top(root_, 80, 0);
     auto *tools = lv_obj_create(root_); surface(tools, 0xF3F4F8, 0); lv_obj_set_size(tools, LV_PCT(100), 44);
     lv_obj_set_flex_flow(tools, LV_FLEX_FLOW_ROW); lv_obj_set_style_pad_column(tools, 7, 0);
     for (int i = 0; i < 4; ++i) filters_.push_back(button(tools, i == 0 ? "Все уровни" : levelNames[i - 1], FilterBase + i));
@@ -153,6 +148,8 @@ void HouseView::show(lv_obj_t *parent, const FloorPlan::Document &plan, const st
 void HouseView::update(const FloorPlan::Document &plan, const std::vector<Device> &devices)
 {
     plan_ = plan; devices_ = devices;
+    if (!device(selected_)) selected_.clear();
+    if (devices_.empty() && chooser_) { lv_obj_delete(chooser_); chooser_ = nullptr; }
     walls_ = houseWalls(plan_); apertures_.clear();
     for (const auto &wall : walls_) apertures_.push_back(wallApertures(wall, plan_));
     scene_dirty_ = true;
@@ -180,10 +177,12 @@ const Device *HouseView::device(const std::string &id) const
     for (const auto &d : devices_) if ("yandex:" + d.id == id) return &d;
     return nullptr;
 }
-bool HouseView::visible(const PlanPlacement &p) const { return level_filter_ < 0 || level_filter_ == static_cast<int>(p.level); }
+bool HouseView::visible(const PlanPlacement &p) const {
+    return device(p.device_id) && (level_filter_ < 0 || level_filter_ == static_cast<int>(p.level));
+}
 HousePoint HouseView::devicePoint(const std::string &id) const
 {
-    for (const auto &p : plan_.devices) if (p.device_id == id) {
+    for (const auto &p : plan_.devices) if (p.device_id == id && visible(p)) {
         const auto *r = room(p.room_id); if (r) return projection_.project(HouseProjection::devicePosition(*r, p));
     }
     return {-10000, -10000};

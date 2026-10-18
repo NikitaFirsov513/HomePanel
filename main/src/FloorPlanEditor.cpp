@@ -69,6 +69,7 @@ void FloorPlanEditor::create(lv_obj_t *parent)
                            lv_display_get_vertical_resolution(lv_obj_get_display(parent)));
     lv_obj_set_pos(root_, -lv_obj_get_style_pad_left(parent, LV_PART_MAIN), -lv_obj_get_style_pad_top(parent, LV_PART_MAIN));
     lv_obj_set_style_pad_all(root_, 12, 0);
+    lv_obj_set_style_pad_top(root_, 76, 0);
     lv_obj_set_style_pad_row(root_, 10, 0);
     lv_obj_set_flex_flow(root_, LV_FLEX_FLOW_COLUMN);
     auto *header = lv_obj_create(root_); surface(header, 0xF3F4F7, 0);
@@ -80,14 +81,14 @@ void FloorPlanEditor::create(lv_obj_t *parent)
     saved_label_ = label(header, "План сохранён", MUTED); lv_obj_set_width(saved_label_, 0); lv_obj_set_flex_grow(saved_label_, 1);
     undo_ = actionButton(header, "Отменить", Undo);
     actionButton(header, "Сохранить", Save);
-    actionButton(header, "Смотреть дом", OpenHouse);
-    actionButton(header, "К списку", Close);
     auto *toolbar = lv_obj_create(root_); surface(toolbar, 0xF3F4F7, 0);
     lv_obj_set_size(toolbar, LV_PCT(100), 44);
     lv_obj_set_flex_flow(toolbar, LV_FLEX_FLOW_ROW);
     lv_obj_set_style_pad_column(toolbar, 6, 0);
     const char *tools[] = {"Выбор", "+ Комната", "Устройство", "Дверь", "Окно", "Обзор"};
     for (int i = 0; i < 6; ++i) tool_buttons_.push_back(actionButton(toolbar, tools[i], i));
+    lv_obj_set_style_text_color(tool_buttons_[2], lv_color_hex(0xA5ACBA), LV_STATE_DISABLED);
+    lv_obj_set_style_bg_color(tool_buttons_[2], lv_color_hex(0xEAEDF2), LV_STATE_DISABLED);
     actionButton(toolbar, "-", ZoomOut);
     zoom_label_ = label(toolbar, "100%", MUTED); lv_obj_set_width(zoom_label_, 65); lv_obj_set_style_pad_top(zoom_label_, 10, 0);
     actionButton(toolbar, "+", ZoomIn);
@@ -146,13 +147,34 @@ void FloorPlanEditor::message(const char *text, bool error)
 }
 void FloorPlanEditor::setDevices(const std::vector<Device> &devices)
 {
-    devices_ = devices;
+    devices_ = authenticated_ ? devices : std::vector<Device>{};
+    // Invalidate an open picker and an in-progress placement immediately when
+    // its cloud source changes. Saved placements are independent of live devices.
+    if (device_dropdown_) lv_dropdown_close(device_dropdown_);
+    if (!deviceAvailable(pending_device_)) pending_device_.clear();
+    if (gesture_ == Gesture::MoveDevice && !deviceAvailable(selected_device_)) gesture_ = Gesture::None;
+    if (!authenticated_) { option_ids_.clear(); gesture_ = Gesture::None; }
     if (house_.root()) house_.update(plan_.document(), devices_);
-    if (root_ && gesture_ == Gesture::None && (!device_dropdown_ || !lv_dropdown_is_open(device_dropdown_))) refreshSidebar();
+    if (root_ && gesture_ == Gesture::None) refreshSidebar();
+    if (tool_buttons_.size() > 2) lv_obj_set_disabled(tool_buttons_[2], !authenticated_ || devices_.empty());
     if (canvas_) lv_obj_invalidate(canvas_);
+}
+bool FloorPlanEditor::deviceAvailable(const std::string &id) const
+{
+    return authenticated_ && std::any_of(devices_.begin(), devices_.end(), [&](const Device &d) { return key(d) == id; });
+}
+void FloorPlanEditor::setAuthenticated(bool value)
+{
+    if (authenticated_ == value) return;
+    authenticated_ = value;
+    if (!value) setDevices({});
+    else if (root_) refreshSidebar();
 }
 void FloorPlanEditor::setTool(Tool tool)
 {
+    if (tool == Tool::Device && (!authenticated_ || devices_.empty())) {
+        message(authenticated_ ? "Обновите список устройств Яндекса" : "Сначала войдите в Яндекс", true); return;
+    }
     tool_ = tool; gesture_ = Gesture::None;
     for (size_t i = 0; i < tool_buttons_.size(); ++i) {
         const bool selected = i == static_cast<size_t>(tool);
@@ -183,7 +205,9 @@ void FloorPlanEditor::refreshSidebar()
     const auto *placement = plan_.placement(selected_device_);
     const auto *room = plan_.room(selected_room_);
     if (placement) {
-        label(sidebar_, placement->name.c_str());
+        const bool available = deviceAvailable(placement->device_id);
+        label(sidebar_, placement->name.c_str(), available ? INK : MUTED);
+        label(sidebar_, available ? "Доступно в Яндексе" : !authenticated_ ? "Требуется вход в Яндекс" : "Нет в текущем аккаунте", available ? 0x2D8669 : 0xAE6342);
         room = plan_.room(placement->room_id);
         if (room) label(sidebar_, room->name.c_str(), MUTED);
     } else if (selected_opening_) {
@@ -209,6 +233,7 @@ void FloorPlanEditor::refreshSidebar()
         lv_obj_set_flex_flow(row, LV_FLEX_FLOW_ROW); lv_obj_set_style_pad_column(row, 3, 0);
         for (int i = 0; i < 3; ++i) {
             auto *obj = actionButton(row, levels[i], LevelBase + i);
+            lv_obj_set_disabled(obj, !authenticated_ || (placement && !deviceAvailable(placement->device_id)));
             lv_obj_set_width(obj, 0); lv_obj_set_flex_grow(obj, 1); lv_obj_set_style_pad_hor(obj, 2, 0);
             if (i == static_cast<int>(placement ? placement->level : pending_level_)) {
                 lv_obj_set_style_bg_color(obj, lv_color_hex(PURPLE), 0); lv_obj_set_style_text_color(obj, lv_color_hex(0xFFFFFF), 0);
@@ -231,6 +256,7 @@ void FloorPlanEditor::refreshSidebar()
         device_dropdown_ = lv_dropdown_create(sidebar_);
         lv_obj_set_width(device_dropdown_, LV_PCT(100)); lv_obj_set_height(device_dropdown_, 48);
         lv_dropdown_set_options(device_dropdown_, options.c_str()); lv_dropdown_set_selected(device_dropdown_, selected);
+        lv_obj_set_disabled(device_dropdown_, !authenticated_ || devices_.empty());
         lv_dropdown_set_symbol(device_dropdown_, nullptr);
         lv_obj_set_style_text_font(lv_dropdown_get_list(device_dropdown_), &font_roboto_20, 0);
         lv_obj_add_event_cb(device_dropdown_, [](lv_event_t *event) {
@@ -240,11 +266,12 @@ void FloorPlanEditor::refreshSidebar()
             editor->clearSelection();
             editor->message("Коснитесь нужного места внутри комнаты.");
         }, LV_EVENT_VALUE_CHANGED, this);
-        if (devices_.empty()) label(sidebar_, "Список появится после подключения к Яндексу", MUTED);
+        if (devices_.empty()) label(sidebar_, authenticated_ ? "Нет устройств в текущем аккаунте" : "Добавление доступно после входа в Яндекс", MUTED);
     }
     if (!room && !placement && !selected_opening_ && tool_ != Tool::Device)
         label(sidebar_, "Выберите объект на плане. Комнаты и устройства можно перетаскивать пальцем.", MUTED);
     lv_obj_set_disabled(undo_, !plan_.canUndo());
+    if (tool_buttons_.size() > 2) lv_obj_set_disabled(tool_buttons_[2], !authenticated_ || devices_.empty());
 }
 
 void FloorPlanEditor::perform(int action, const std::string &arg)
@@ -420,6 +447,7 @@ void FloorPlanEditor::pointerDown(int x, int y)
         lv_obj_invalidate(canvas_); return;
     }
     if (tool_ == Tool::Device) {
+        if (!authenticated_) { message("Сначала войдите в Яндекс", true); return; }
         const auto it = std::find_if(devices_.begin(), devices_.end(), [&](const Device &d) { return key(d) == pending_device_; });
         const auto *room = roomAt(start_gx_, start_gy_);
         if (it == devices_.end()) { message("Сначала выберите устройство справа", true); return; }
@@ -455,7 +483,10 @@ void FloorPlanEditor::pointerDown(int x, int y)
         const auto pos = devicePoint(p);
         if ((pos.x - x) * (pos.x - x) + (pos.y - y) * (pos.y - y) <= 22 * 22) {
             selected_device_ = p.device_id; draft_device_ = p; pending_level_ = p.level;
-            gesture_ = Gesture::MoveDevice; refreshSidebar(); lv_obj_invalidate(canvas_); return;
+            gesture_ = deviceAvailable(p.device_id) ? Gesture::MoveDevice : Gesture::None;
+            if (gesture_ == Gesture::None) message(authenticated_ ? "Устройство отсутствует в текущем аккаунте Яндекса." :
+                "Сохранённая привязка. Войдите в Яндекс, чтобы проверить устройство.");
+            refreshSidebar(); lv_obj_invalidate(canvas_); return;
         }
     }
     for (const auto &o : plan_.document().openings) {
@@ -619,11 +650,13 @@ void FloorPlanEditor::draw(lv_layer_t *layer)
         const auto &p = gesture_ == Gesture::MoveDevice && saved.device_id == selected_device_ ? draft_device_ : saved;
         const auto pos = devicePoint(p);
         const bool selected = p.device_id == selected_device_;
-        rect(pos.x - 20, pos.y - 20, 40, 40, 0xFFFFFF, selected ? PURPLE : 0xD1D5E0, selected ? 3 : 1, 20);
+        const bool available = deviceAvailable(p.device_id);
+        rect(pos.x - 20, pos.y - 20, 40, 40, available ? 0xFFFFFF : 0xEEF0F4, selected ? PURPLE : 0xD1D5E0, selected ? 3 : 1, 20);
         lv_area_t area = {canvas.x1 + pos.x - 18, canvas.y1 + pos.y - 18, canvas.x1 + pos.x + 17, canvas.y1 + pos.y + 17};
-        drawDeviceIcon(layer, deviceIconForType(p.type), area, lv_color_hex(selected ? PURPLE : 0x68738B));
+        drawDeviceIcon(layer, deviceIconForType(p.type), area, lv_color_hex(!available ? 0xADB4C3 : selected ? PURPLE : 0x68738B));
         const uint32_t level_colors[] = {0x3E9C86, PURPLE, 0xCE983D};
-        rect(pos.x + 11, pos.y - 20, 9, 9, level_colors[static_cast<int>(p.level)], 0xFFFFFF, 1, 5);
+        rect(pos.x + 11, pos.y - 20, 9, 9, available ? level_colors[static_cast<int>(p.level)] : 0xADB4C3, 0xFFFFFF, 1, 5);
+        if (!available) text(pos.x - 56, pos.y + 22, 118, authenticated_ ? "Недоступно" : "Нет входа", MUTED);
     }
     if (plan_.document().rooms.empty() && gesture_ != Gesture::NewRoom) {
         text(30, 48, lv_obj_get_width(canvas_) - 60, "Нарисуйте первую комнату", PURPLE);

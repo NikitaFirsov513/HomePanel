@@ -5,9 +5,13 @@
 #include "DeviceAction.hpp"
 #include "FloorPlanEditor.hpp"
 #include "AccountView.hpp"
+#include <array>
 class HomePage : public Page
 {
 public:
+    enum class View { House, Devices, Plan, Account };
+    void navigate(View view);
+    View view() const { return view_; }
     void create() override;
     void create(DeviceManager *device_manager);
     void update(const std::vector<Device> &devices);
@@ -20,6 +24,12 @@ public:
     void updateAuth(const AuthSnapshot &snapshot);
 
 private:
+    View view_ = View::House;
+    bool authorized_ = false;
+    bool auth_seen_ = false;
+    AuthState auth_state_ = AuthState::SignedOut;
+    lv_obj_t *navigation_ = nullptr, *auth_badge_ = nullptr, *auth_badge_text_ = nullptr;
+    std::array<lv_obj_t *, 4> nav_buttons_{};
     lv_obj_t *list_ = nullptr;
     lv_obj_t *status_ = nullptr;
     lv_obj_t *count_ = nullptr;
@@ -35,6 +45,7 @@ private:
     std::vector<Device> devices_;
     size_t card_widget_count_ = 1;
     void toggleDevice(const std::string &id);
+    void rebuildDevices(const std::vector<Device> &devices, bool force = false);
     void closeDetails();
     void showDetails(const Device &device);
     void createControls(const Device &device, lv_obj_t *body);

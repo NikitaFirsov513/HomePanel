@@ -117,13 +117,16 @@ void HomePage::setStatus(const char *text, bool error, bool finished)
     if (finished) {
         busy_ = false;
         for (auto *obj : widgets_) lv_obj_set_disabled(obj, false);
+        if (!widgets_.empty()) lv_obj_set_disabled(widgets_.front(), !authorized_);
         if (close_) lv_obj_set_disabled(close_, false);
+        for (auto *obj : nav_buttons_) lv_obj_set_disabled(obj, false);
     }
 }
 
 void HomePage::submit(const DeviceAction &action)
 {
     if (busy_) return;
+    if (!authorized_) { navigate(View::Account); return; }
     if (!handler_ || !handler_(action)) {
         setStatus("Не удалось отправить команду. Повторите попытку.", true);
         return;
@@ -132,12 +135,13 @@ void HomePage::submit(const DeviceAction &action)
     setStatus(action.kind == ActionValue::Refresh ? "Обновление устройств..." : "Отправка команды...", false, false);
     for (auto *obj : widgets_) lv_obj_set_disabled(obj, true);
     if (close_) lv_obj_set_disabled(close_, true);
+    for (auto *obj : nav_buttons_) lv_obj_set_disabled(obj, true);
 }
 
 void HomePage::controlEvent(lv_event_t *event)
 {
     auto *b = static_cast<Binding *>(lv_event_get_user_data(event));
-    if (b->page->busy_) return;
+    if (b->page->busy_ || !b->page->authorized_) return;
     if (b->expand) { b->page->toggleDevice(b->action.device_id); return; }
     auto *obj = static_cast<lv_obj_t *>(lv_event_get_target(event));
     if (b->slider) {
@@ -171,7 +175,7 @@ void HomePage::closeDetails()
 
 void HomePage::toggleDevice(const std::string &id)
 {
-    if (busy_) return;
+    if (busy_ || !authorized_) return;
     const auto it = std::find_if(devices_.begin(), devices_.end(), [&](const Device &d) { return d.id == id; });
     if (it != devices_.end()) showDetails(*it);
 }
@@ -212,54 +216,30 @@ void HomePage::create()
     lv_obj_set_style_text_font(root_, &font_roboto_20, 0);
     lv_obj_set_style_text_color(root_, lv_color_hex(INK), 0);
     lv_obj_set_style_pad_all(root_, 20, 0);
+    lv_obj_set_style_pad_top(root_, 84, 0);
     lv_obj_set_style_pad_row(root_, 12, 0);
     lv_obj_set_flex_flow(root_, LV_FLEX_FLOW_COLUMN);
     auto *header = lv_obj_create(root_);
     surface(header, 0xF3F4F7, 0);
     lv_obj_set_size(header, LV_PCT(100), 52);
-    auto *heading = label(header, "Устройства");
-    lv_obj_set_width(heading, 150);
+    auto *heading = label(header, "Список устройств");
+    lv_obj_set_width(heading, 200);
     lv_obj_align(heading, LV_ALIGN_LEFT_MID, 0, 0);
     count_ = label(header, "");
     lv_obj_set_style_text_color(count_, lv_color_hex(MUTED), 0);
     lv_obj_set_size(count_, 300, LV_SIZE_CONTENT);
-    lv_obj_align(count_, LV_ALIGN_LEFT_MID, 154, 0);
+    lv_obj_align(count_, LV_ALIGN_LEFT_MID, 208, 0);
     auto *refresh = button(header, "Обновить");
     lv_obj_set_width(refresh, 148);
     lv_obj_align(refresh, LV_ALIGN_RIGHT_MID, 0, 0);
     auto *refresh_binding = new Binding;
     refresh_binding->action.kind = ActionValue::Refresh;
     bind(refresh, refresh_binding, LV_EVENT_CLICKED);
-    auto *plan = button(header, "План дома");
-    lv_obj_set_width(plan, 152);
-    lv_obj_align(plan, LV_ALIGN_RIGHT_MID, -160, 0);
     lv_obj_set_width(count_, 230);
-    auto *account = button(header, "Яндекс");
-    lv_obj_set_width(account, 112); lv_obj_align(account, LV_ALIGN_RIGHT_MID, -440, 0);
-    lv_obj_set_width(count_, 230);
-    lv_obj_add_event_cb(account, [](lv_event_t *event) {
-        auto *page = static_cast<HomePage *>(lv_event_get_user_data(event));
-        if (!page->busy_) page->account_.show(page->root_);
-    }, LV_EVENT_CLICKED, this);
-    editor_.house().setAccountHandler([](void *context) {
-        auto *page = static_cast<HomePage *>(context);
-        if (!page->busy_) page->account_.show(page->root_);
-    }, this);
-    lv_obj_add_event_cb(plan, [](lv_event_t *event) {
-        auto *page = static_cast<HomePage *>(lv_event_get_user_data(event));
-        if (!page->busy_) page->editor_.show(page->root_);
-    }, LV_EVENT_CLICKED, this);
     editor_.setDeviceHandler([](void *context, const std::string &id) {
         auto *page = static_cast<HomePage *>(context);
         if (id.rfind("yandex:", 0) == 0) page->toggleDevice(id.substr(7));
     }, this);
-    auto *house = button(header, "Дом");
-    lv_obj_set_width(house, 112);
-    lv_obj_align(house, LV_ALIGN_RIGHT_MID, -320, 0);
-    lv_obj_add_event_cb(house, [](lv_event_t *event) {
-        auto *page = static_cast<HomePage *>(lv_event_get_user_data(event));
-        if (!page->busy_) page->editor_.showHouse(page->root_);
-    }, LV_EVENT_CLICKED, this);
     status_ = label(root_, "Устройства готовы к управлению");
     lv_obj_set_style_text_color(status_, lv_color_hex(MUTED), 0);
     lv_label_set_long_mode(status_, LV_LABEL_LONG_WRAP);
@@ -282,7 +262,7 @@ void HomePage::create()
     lv_obj_set_floating(overlay_, true);
     const int screen_width = lv_display_get_horizontal_resolution(lv_obj_get_display(root_));
     const int screen_height = lv_display_get_vertical_resolution(lv_obj_get_display(root_));
-    lv_obj_set_size(overlay_, screen_width, screen_height);
+    lv_obj_set_size(overlay_, screen_width, screen_height - 64);
     // Floating objects are positioned relative to the parent's content origin.
     lv_obj_set_pos(overlay_, -20, -20);
     lv_obj_add_event_cb(overlay_, [](lv_event_t *event) {
@@ -322,9 +302,48 @@ void HomePage::create()
     lv_obj_set_scrollable(details_, true);
     lv_obj_set_scroll_dir(details_, LV_DIR_VER);
     lv_obj_set_hidden(overlay_, true);
-    // Open the saved house immediately, including before network/device loading.
-    // Subsequent model updates preserve whichever section the user opened.
-    editor_.showHouse(root_);
+
+    navigation_ = lv_obj_create(root_); surface(navigation_, 0xFFFFFF, 0);
+    lv_obj_set_floating(navigation_, true); lv_obj_set_size(navigation_, screen_width, 64);
+    lv_obj_set_pos(navigation_, -20, -84); lv_obj_set_style_pad_hor(navigation_, 16, 0);
+    lv_obj_set_flex_flow(navigation_, LV_FLEX_FLOW_ROW); lv_obj_set_style_pad_column(navigation_, 8, 0);
+    lv_obj_set_flex_align(navigation_, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+    auto *brand = label(navigation_, "Мой дом"); lv_obj_set_width(brand, 110);
+    const char *names[] = {"Дом", "Устройства", "План", "Яндекс"};
+    const int widths[] = {100, 140, 100, 112};
+    struct NavBinding { HomePage *page; View view; };
+    for (int i = 0; i < 4; ++i) {
+        auto *tab = button(navigation_, names[i]); nav_buttons_[i] = tab; lv_obj_set_width(tab, widths[i]);
+        auto *binding = new NavBinding{this, static_cast<View>(i)};
+        lv_obj_add_event_cb(tab, [](lv_event_t *event) {
+            auto *b = static_cast<NavBinding *>(lv_event_get_user_data(event)); b->page->navigate(b->view);
+        }, LV_EVENT_CLICKED, binding);
+        lv_obj_add_event_cb(tab, [](lv_event_t *event) { delete static_cast<NavBinding *>(lv_event_get_user_data(event)); }, LV_EVENT_DELETE, binding);
+    }
+    auth_badge_ = button(navigation_, "Яндекс: вход не выполнен");
+    auth_badge_text_ = lv_obj_get_child(auth_badge_, 0); lv_obj_set_width(auth_badge_, 0); lv_obj_set_flex_grow(auth_badge_, 1);
+    lv_obj_set_style_text_color(auth_badge_, lv_color_hex(0xAE6342), 0);
+    lv_obj_set_style_bg_color(auth_badge_, lv_color_hex(0xFFF0DF), 0);
+    lv_obj_add_event_cb(auth_badge_, [](lv_event_t *event) { static_cast<HomePage *>(lv_event_get_user_data(event))->navigate(View::Account); }, LV_EVENT_CLICKED, this);
+    navigate(View::House);
+    rebuildDevices({}, true);
+}
+
+void HomePage::navigate(View view)
+{
+    create();
+    if (busy_) return;
+    closeDetails(); editor_.hide(); editor_.house().hide(); account_.hide();
+    view_ = view;
+    if (view == View::House) editor_.showHouse(root_);
+    else if (view == View::Plan) editor_.show(root_);
+    else if (view == View::Account) account_.show(root_);
+    for (size_t i = 0; i < nav_buttons_.size(); ++i) {
+        const bool active = i == static_cast<size_t>(view);
+        lv_obj_set_style_bg_color(nav_buttons_[i], lv_color_hex(active ? ACCENT : 0xF3F4F7), 0);
+        lv_obj_set_style_text_color(nav_buttons_[i], lv_color_hex(active ? 0xFFFFFF : MUTED), 0);
+    }
+    lv_obj_move_foreground(navigation_);
 }
 
 void HomePage::create(DeviceManager *device_manager)
@@ -337,18 +356,40 @@ void HomePage::create(DeviceManager *device_manager)
 void HomePage::updateAuth(const AuthSnapshot &snapshot)
 {
     create();
+    const bool changed = authorized_ != snapshot.authorized;
+    const bool state_changed = !auth_seen_ || auth_state_ != snapshot.state;
+    auth_seen_ = true; auth_state_ = snapshot.state;
+    authorized_ = snapshot.authorized;
     account_.update(snapshot);
+    editor_.setAuthenticated(authorized_);
+    const bool waiting = snapshot.state == AuthState::Waiting;
+    const bool error = snapshot.state == AuthState::Error;
+    lv_label_set_text(auth_badge_text_, error ? "Яндекс: ошибка входа" : authorized_ ? "Яндекс: вход выполнен" :
+                      waiting ? "Яндекс: ожидание входа" : "Яндекс: вход не выполнен");
+    lv_obj_set_style_bg_color(auth_badge_, lv_color_hex(error ? 0xFFF0DF : authorized_ ? 0xE5F4EC : waiting ? 0xEFEBFA : 0xFFF0DF), 0);
+    lv_obj_set_style_text_color(auth_badge_, lv_color_hex(error ? 0xAE6342 : authorized_ ? 0x2D8669 : waiting ? ACCENT : 0xAE6342), 0);
     if (!snapshot.authorized) {
         busy_ = false;
-        if (!expanded_id_.empty()) closeDetails();
+        for (auto *obj : nav_buttons_) lv_obj_set_disabled(obj, false);
+        closeDetails();
     }
+    if (changed || (!authorized_ && !devices_.empty())) rebuildDevices({}, true);
+    if (changed || state_changed) setStatus(error ? snapshot.message : authorized_ ? "Вход в Яндекс выполнен" :
+        waiting ? "Подтвердите вход на телефоне. QR находится в разделе «Яндекс»." :
+                  "Вход не выполнен. Комнаты сохранены; устройства появятся после входа в Яндекс.", error);
 }
 
 void HomePage::update(const std::vector<Device> &devices)
 {
     create();
-    if (busy_) return;
-    for (auto *obj : widgets_) {
+    if (!authorized_) return;
+    rebuildDevices(devices);
+}
+
+void HomePage::rebuildDevices(const std::vector<Device> &devices, bool force)
+{
+    if (busy_ && !force) return;
+    if (!force) for (auto *obj : widgets_) {
         if (lv_obj_has_state(obj, LV_STATE_PRESSED)) return;
         if (lv_obj_check_type(obj, &lv_dropdown_class) && lv_dropdown_is_open(obj)) return;
     }
@@ -363,11 +404,13 @@ void HomePage::update(const std::vector<Device> &devices)
     lv_obj_update_layout(root_);
     const int width = lv_obj_get_content_width(list_);
     const int card_width = width >= 700 ? (width - 12) / 2 : width;
-    if (devices.empty()) label(list_, "Добавьте устройства в Дом с Алисой");
+    lv_obj_set_disabled(widgets_.front(), !authorized_);
+    if (devices.empty()) label(list_, authorized_ ? "Устройств пока нет. Обновите список или добавьте их в Дом с Алисой." :
+                                               "Вход в Яндекс не выполнен. Откройте раздел «Яндекс», чтобы подключить устройства.");
     for (const auto &device : devices) {
         auto *card = lv_obj_create(list_);
         surface(card, 0xFFFFFF);
-        lv_obj_set_size(card, card_width, 132);
+        lv_obj_set_size(card, card_width, 116);
         lv_obj_set_style_bg_color(card, lv_color_hex(0xEBE8F5), LV_STATE_PRESSED);
         auto make = [&]() {
             auto *b = new Binding;

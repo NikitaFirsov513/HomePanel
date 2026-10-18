@@ -41,7 +41,8 @@ void AccountView::create(lv_obj_t *parent) {
     lv_obj_set_style_text_font(root_, &font_roboto_20, 0);
     lv_obj_set_size(root_, lv_display_get_horizontal_resolution(lv_obj_get_display(parent)), lv_display_get_vertical_resolution(lv_obj_get_display(parent)));
     lv_obj_set_pos(root_, -lv_obj_get_style_pad_left(parent, LV_PART_MAIN), -lv_obj_get_style_pad_top(parent, LV_PART_MAIN));
-    text(root_, "Аккаунт Яндекса", 28, 24, 400);
+    lv_obj_set_style_pad_top(root_, 64, 0);
+    text(root_, "Аккаунт Яндекса", 28, 8, 400);
     auto *panel = lv_obj_create(root_); surface(panel, 0xFFFFFF); lv_obj_set_size(panel, 920, 470); lv_obj_center(panel);
     qr_ = lv_qrcode_create(panel); lv_qrcode_set_size(qr_, 272); lv_qrcode_set_quiet_zone(qr_, true);
     lv_obj_set_pos(qr_, 20, 45);
@@ -55,7 +56,6 @@ void AccountView::create(lv_obj_t *parent) {
     cancel_ = button(panel, "Отменить вход", 332, 1);
     logout_ = button(panel, "Выйти", 332, 2);
     restart_ = button(panel, "Войти заново", 510, 4);
-    button(panel, "Закрыть", 694, 3);
     update(snapshot_);
 }
 void AccountView::show(lv_obj_t *parent) {

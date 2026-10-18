@@ -53,7 +53,7 @@ public:
     esp_err_t setHomePage(DeviceManager *device_manager);
     void setActionHandler(HomePage::ActionHandler handler) { home_page_.setActionHandler(handler); }
     void setAuthHandler(AccountView::Handler handler) { home_page_.setAuthHandler(handler); }
-    esp_err_t setAuthState(const AuthSnapshot &snapshot);
+    esp_err_t setAuthState(const AuthSnapshot &snapshot, DeviceManager *devices = nullptr);
     esp_err_t setControlResult(DeviceManager *devices, const char *text, bool error, bool finished = true);
 
 private:

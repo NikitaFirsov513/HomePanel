@@ -9,6 +9,7 @@ public:
     ~AccountView();
     void setHandler(Handler handler) { handler_ = handler; }
     void show(lv_obj_t *parent);
+    void hide() { if (root_) lv_obj_set_hidden(root_, true); }
     void update(const AuthSnapshot &snapshot);
     lv_obj_t *root() const { return root_; }
 private:

@@ -240,7 +240,7 @@ static void device_sync_task(void *)
         }
         const auto snapshot = auth.snapshot(now);
         if (!published || auth_command_received || !same_auth(snapshot, previous)) {
-            if (ui_manager.setAuthState(snapshot) == ESP_OK) { previous = snapshot; published = true; }
+            if (ui_manager.setAuthState(snapshot, &device_manager) == ESP_OK) { previous = snapshot; published = true; }
         }
         if (!auth.authorized()) auth_ready.store(false);
         ulTaskNotifyTake(pdTRUE, pdMS_TO_TICKS(1000));

@@ -82,9 +82,10 @@ int main()
         const std::vector<Device> devices = {lamp, lamp2, lamp3, vacuum, speaker, speaker2};
         page.update(devices);
         lv_screen_load(page.root());
+        CHECK(!textButton(page.root(), lamp.name.c_str())); // Cloud data is gated by login.
         auto &default_house = page.editor().house();
         CHECK(default_house.root() && lv_obj_is_visible(default_house.root()));
-        auto *account_button = textButton(default_house.root(), "Яндекс"); CHECK(account_button);
+        auto *account_button = textButton(page.root(), "Яндекс"); CHECK(account_button);
         lv_obj_send_event(account_button, LV_EVENT_CLICKED, nullptr);
         auto *account_title = textButton(page.root(), "Аккаунт Яндекса"); CHECK(account_title);
         auto *login = textButton(account_title, "Войти по QR"); CHECK(login);
@@ -110,13 +111,15 @@ int main()
         auto *logout = textButton(account_title, "Выйти"); CHECK(logout && lv_obj_is_visible(logout));
         lv_obj_send_event(logout, LV_EVENT_CLICKED, nullptr); CHECK(auth_calls == 4 && auth_action == AuthAction::Logout);
         page.updateAuth(AuthSnapshot{});
-        auto *close_account = textButton(account_title, "Закрыть"); CHECK(close_account);
-        lv_obj_send_event(close_account, LV_EVENT_CLICKED, nullptr);
+        auto *home_tab = textButton(page.root(), "Дом"); CHECK(home_tab);
+        lv_obj_send_event(home_tab, LV_EVENT_CLICKED, nullptr);
         CHECK(!lv_obj_is_visible(account_title) && lv_obj_is_visible(default_house.root()));
         CHECK(lv_obj_has_flag(page.editor().root(), LV_OBJ_FLAG_HIDDEN));
         page.setStatus("Нет подключения к сети", true);
         CHECK(textButton(default_house.root(), "Нет подключения к сети"));
-        auto *open_list = textButton(default_house.root(), "Список"); CHECK(open_list);
+        page.updateAuth(connected); page.update(devices);
+        CHECK(textButton(page.root(), "Яндекс: вход выполнен"));
+        auto *open_list = textButton(page.root(), "Устройства"); CHECK(open_list);
         lv_obj_send_event(open_list, LV_EVENT_CLICKED, nullptr);
         CHECK(!lv_obj_is_visible(default_house.root()));
         page.update(devices); // A refresh must preserve the selected list screen.
@@ -197,7 +200,7 @@ int main()
         CHECK(lv_obj_get_y(last_card) + lv_obj_get_height(last_card) <= lv_obj_get_content_height(lv_obj_get_parent(last_card)));
         snapshot(display, "home-page.ppm");
 
-        auto *plan_button = textButton(page.root(), "План дома"); CHECK(plan_button);
+        auto *plan_button = textButton(page.root(), "План"); CHECK(plan_button);
         lv_obj_send_event(plan_button, LV_EVENT_CLICKED, nullptr);
         auto &editor = page.editor();
         CHECK(editor.root() && !lv_obj_has_flag(editor.root(), LV_OBJ_FLAG_HIDDEN));
@@ -290,14 +293,14 @@ int main()
         const auto saved = editor.plan().serialize();
         {
             FloorPlanEditor reopened;
-            reopened.setDevices(devices); reopened.show(page.root());
+            reopened.setAuthenticated(true); reopened.setDevices(devices); reopened.show(page.root());
             CHECK(reopened.plan().serialize() == saved && !reopened.plan().dirty());
             reopened.hide();
         }
         CHECK(calls == calls_before_editor); // Editing must never control real devices.
         click("Выбор"); tap(17, 6); click("Весь план");
         snapshot(display, "floor-plan-editor.ppm");
-        click("К списку");
+        page.navigate(HomePage::View::Devices);
         CHECK(lv_obj_has_flag(editor.root(), LV_OBJ_FLAG_HIDDEN));
 
         // The house view uses this same unsaved/saved model and real device UI.
@@ -338,9 +341,45 @@ int main()
         houseClick("Стены: 0%"); CHECK(house.wallOpacity() == 70);
         CHECK(editor.plan().serialize() == before_house); // Camera/filter controls never edit the plan.
         snapshot(display, "house-perspective.ppm");
-        houseClick("Редактор 2D"); CHECK(!lv_obj_has_flag(editor.root(), LV_OBJ_FLAG_HIDDEN));
-        click("Смотреть дом"); CHECK(!lv_obj_has_flag(house.root(), LV_OBJ_FLAG_HIDDEN));
-        houseClick("Список"); CHECK(lv_obj_has_flag(house.root(), LV_OBJ_FLAG_HIDDEN));
+        page.navigate(HomePage::View::Plan); CHECK(!lv_obj_has_flag(editor.root(), LV_OBJ_FLAG_HIDDEN));
+        page.navigate(HomePage::View::House); CHECK(!lv_obj_has_flag(house.root(), LV_OBJ_FLAG_HIDDEN));
+        page.navigate(HomePage::View::Devices); CHECK(lv_obj_has_flag(house.root(), LV_OBJ_FLAG_HIDDEN));
+
+        // Logout must invalidate an open device picker, pressed cards and saved
+        // house markers immediately, without deleting the local floor plan.
+        const auto preserved_plan = editor.plan().serialize();
+        auto *pressed_card = textButton(page.root(), lamp.name.c_str()); CHECK(pressed_card);
+        lv_obj_add_state(pressed_card, LV_STATE_PRESSED);
+        page.navigate(HomePage::View::Plan); editor.setTool(FloorPlanEditor::Tool::Device);
+        auto *old_picker = find(editor.root(), &lv_dropdown_class); CHECK(old_picker);
+        lv_dropdown_open(old_picker);
+        page.updateAuth(AuthSnapshot{});
+        CHECK(textButton(page.root(), "Устройств: 0"));
+        auto *new_picker = find(editor.root(), &lv_dropdown_class); CHECK(new_picker);
+        CHECK(lv_obj_has_state(new_picker, LV_STATE_DISABLED) && !lv_dropdown_is_open(new_picker));
+        CHECK(lv_dropdown_get_option_count(new_picker) == 1);
+        page.update(devices); // A stale cloud snapshot after logout must be ignored.
+        CHECK(textButton(page.root(), "Устройств: 0") && house.devicePoint("yandex:lamp").x < 0);
+        const auto offline_point = editor.gridPoint(17, 6);
+        editor.pointerDown(offline_point.x, offline_point.y); editor.pointerUp(offline_point.x, offline_point.y);
+        CHECK(editor.plan().serialize() == preserved_plan);
+        page.navigate(HomePage::View::House);
+        CHECK(lv_obj_is_visible(textButton(page.root(), "Яндекс: вход не выполнен")));
+        snapshot(display, "house-signed-out.ppm");
+        page.navigate(HomePage::View::Plan); editor.setTool(FloorPlanEditor::Tool::Select);
+        const auto &saved_pin = editor.plan().document().devices.front();
+        const auto *saved_room = editor.plan().room(saved_pin.room_id); CHECK(saved_room);
+        const auto ghost = editor.gridPoint(saved_room->rect.x + saved_room->rect.w * saved_pin.u / 1000.0,
+                                           saved_room->rect.y + saved_room->rect.h * saved_pin.v / 1000.0);
+        editor.pointerDown(ghost.x, ghost.y); editor.pointerUp(ghost.x, ghost.y);
+        CHECK(textButton(editor.root(), "Требуется вход в Яндекс"));
+        snapshot(display, "floor-plan-signed-out.ppm");
+        CHECK(editor.plan().serialize() == preserved_plan);
+        page.updateAuth(connected); page.update({speaker});
+        CHECK(house.devicePoint("yandex:lamp").x < 0 && house.devicePoint("yandex:speaker").x > 0);
+        page.update(devices);
+        CHECK(house.devicePoint("yandex:lamp").x > 0);
+        page.navigate(HomePage::View::Devices);
 
         // Same XY at three heights stays distinct in all camera directions;
         // exact overlapping markers provide an explicit device picker.

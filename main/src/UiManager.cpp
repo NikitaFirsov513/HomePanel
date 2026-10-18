@@ -67,7 +67,8 @@ void UiManager::ui_process_message(const UiMessage &msg)
     // Snapshot before locking LVGL, so model contention cannot freeze rendering.
     std::vector<Device> devices;
     bool snapshot_available = true;
-    if (msg.type == UiMessageType::SET_HOME_PAGE || msg.type == UiMessageType::CONTROL_RESULT) {
+    if (msg.type == UiMessageType::SET_HOME_PAGE || msg.type == UiMessageType::CONTROL_RESULT ||
+        (msg.type == UiMessageType::AUTH_STATE && msg.auth.authorized)) {
         if (!msg.device_manager || msg.device_manager->getDevices(devices) != ESP_OK) {
             ESP_LOGW(TAG, "Cannot obtain device snapshot");
             if (msg.type == UiMessageType::SET_HOME_PAGE) return;
@@ -78,6 +79,7 @@ void UiManager::ui_process_message(const UiMessage &msg)
     switch (msg.type) {
     case UiMessageType::AUTH_STATE:
         home_page_.updateAuth(msg.auth);
+        if (msg.auth.authorized && snapshot_available) home_page_.update(devices);
         break;
     case UiMessageType::SET_LOAD_PAGE:
     case UiMessageType::SET_ERROR_PAGE:
@@ -142,9 +144,10 @@ esp_err_t UiManager::updateMainPage(DeviceManager *device_manager)
     return setHomePage(device_manager);
 }
 
-esp_err_t UiManager::setAuthState(const AuthSnapshot &snapshot)
+esp_err_t UiManager::setAuthState(const AuthSnapshot &snapshot, DeviceManager *devices)
 {
     UiMessage msg{}; msg.type = UiMessageType::AUTH_STATE; msg.auth = snapshot;
+    msg.device_manager = devices;
     return ui_send(msg) ? ESP_OK : ESP_FAIL;
 }
 

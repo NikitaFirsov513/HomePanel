@@ -17,6 +17,7 @@ public:
     void setDeviceHandler(HouseView::DeviceHandler handler, void *context) { device_handler_ = handler; device_context_ = context; }
     HouseView &house() { return house_; }
     void setDevices(const std::vector<Device> &devices);
+    void setAuthenticated(bool authenticated);
     lv_obj_t *root() const { return root_; }
     lv_obj_t *canvas() const { return canvas_; }
     const FloorPlan &plan() const { return plan_; }
@@ -29,6 +30,8 @@ public:
 private:
     FloorPlan plan_;
     std::vector<Device> devices_;
+    bool authenticated_ = false;
+    bool deviceAvailable(const std::string &id) const;
     std::vector<std::string> option_ids_;
     lv_obj_t *root_ = nullptr, *canvas_ = nullptr, *sidebar_ = nullptr, *status_ = nullptr;
     lv_obj_t *saved_label_ = nullptr, *zoom_label_ = nullptr, *undo_ = nullptr, *device_dropdown_ = nullptr;
