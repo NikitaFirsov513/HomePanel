@@ -202,8 +202,8 @@ static void device_sync_task(void *)
                 cached_devices = false;
                 ui_manager.setControlResult(&device_manager, "Аккаунт отключён", false);
             }
-            status(storage_ok ? "Для подключения устройств откройте «Яндекс» и войдите по QR" :
-                                "Не удалось прочитать хранилище входа. Откройте «Яндекс».", !storage_ok, received);
+            status(storage_ok ? "Для подключения устройств откройте раздел Яндекс и войдите по QR" :
+                                "Не удалось прочитать хранилище входа. Откройте раздел Яндекс.", !storage_ok, received);
             next_sync = 0;
         } else if (!network_ready()) {
             status("Нет сети. Ожидание Ethernet...", true, received); next_sync = 0;

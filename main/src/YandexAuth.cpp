@@ -104,7 +104,7 @@ void YandexAuth::restart(uint64_t now) {
 }
 void YandexAuth::tick(uint64_t now, bool online) {
     if (state_ != AuthState::Waiting) return;
-    if (now >= code_expires_) { fail("Код устарел. Нажмите «Войти по QR», чтобы получить новый."); return; }
+    if (now >= code_expires_) { fail("Код устарел. Запросите новый код входа."); return; }
     if (!online) { message_ = "Нет сети. Подключите Ethernet, пока код не истёк."; return; }
     if (now < next_poll_) return;
     next_poll_ = now + interval_;

@@ -20,7 +20,9 @@ private:
     lv_obj_t *steps_ = nullptr;
     lv_obj_t *restart_ = nullptr;
     lv_obj_t *url_label_ = nullptr;
+    lv_obj_t *heading_ = nullptr, *state_label_ = nullptr;
     std::string qr_url_;
+    bool qr_valid_ = false;
     void create(lv_obj_t *parent);
     lv_obj_t *button(lv_obj_t *parent, const char *text, int x, int action);
 };

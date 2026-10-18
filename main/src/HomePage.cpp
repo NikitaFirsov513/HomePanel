@@ -375,7 +375,7 @@ void HomePage::updateAuth(const AuthSnapshot &snapshot)
     }
     if (changed || (!authorized_ && !devices_.empty())) rebuildDevices({}, true);
     if (changed || state_changed) setStatus(error ? snapshot.message : authorized_ ? "Вход в Яндекс выполнен" :
-        waiting ? "Подтвердите вход на телефоне. QR находится в разделе «Яндекс»." :
+        waiting ? "Подтвердите вход на телефоне. QR находится в разделе Яндекс." :
                   "Вход не выполнен. Комнаты сохранены; устройства появятся после входа в Яндекс.", error);
 }
 
@@ -406,7 +406,7 @@ void HomePage::rebuildDevices(const std::vector<Device> &devices, bool force)
     const int card_width = width >= 700 ? (width - 12) / 2 : width;
     lv_obj_set_disabled(widgets_.front(), !authorized_);
     if (devices.empty()) label(list_, authorized_ ? "Устройств пока нет. Обновите список или добавьте их в Дом с Алисой." :
-                                               "Вход в Яндекс не выполнен. Откройте раздел «Яндекс», чтобы подключить устройства.");
+                                               "Вход в Яндекс не выполнен. Откройте раздел Яндекс, чтобы подключить устройства.");
     for (const auto &device : devices) {
         auto *card = lv_obj_create(list_);
         surface(card, 0xFFFFFF);

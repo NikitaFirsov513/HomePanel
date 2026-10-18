@@ -135,7 +135,7 @@ void HouseView::create(lv_obj_t *parent)
     canvas_ = lv_obj_create(root_); surface(canvas_, 0xF8F9FC, 20);
     lv_obj_set_width(canvas_, LV_PCT(100)); lv_obj_set_flex_grow(canvas_, 1);
     lv_obj_set_press_lock(canvas_, true); lv_obj_add_event_cb(canvas_, event, LV_EVENT_ALL, this);
-    status_ = label(root_, "Нажмите на устройство для управления. Кнопка «Поворот» меняет ракурс дома.", MUTED);
+    status_ = label(root_, "Нажмите на устройство для управления. Кнопка Поворот меняет ракурс дома.", MUTED);
     perform(FilterBase);
     lv_obj_update_layout(root_);
 }

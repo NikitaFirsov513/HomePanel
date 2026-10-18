@@ -30,6 +30,27 @@ static lv_obj_t *textButton(lv_obj_t *root, const char *text)
     return nullptr;
 }
 static std::vector<uint8_t> pixels(1024 * 600 * 3);
+// Every visible account label must be renderable by the font actually used on the panel.
+static void checkGlyphs(lv_obj_t *obj)
+{
+    if (!lv_obj_is_visible(obj)) return;
+    if (lv_obj_check_type(obj, &lv_label_class)) {
+        const auto *p = reinterpret_cast<const unsigned char *>(lv_label_get_text(obj));
+        const auto *font = lv_obj_get_style_text_font(obj, LV_PART_MAIN);
+        while (*p) {
+            uint32_t cp = *p++;
+            if (cp >= 0xC0) {
+                unsigned remaining = cp < 0xE0 ? 1 : cp < 0xF0 ? 2 : 3;
+                cp &= (1u << (6 - remaining)) - 1;
+                while (remaining--) { CHECK((*p & 0xC0) == 0x80); cp = (cp << 6) | (*p++ & 0x3F); }
+            }
+            if (cp == '\n' || cp == '\r') continue;
+            lv_font_glyph_dsc_t glyph{};
+            CHECK(lv_font_get_glyph_dsc(font, &glyph, cp, 0) && !glyph.is_placeholder);
+        }
+    }
+    for (uint32_t i = 0; i < lv_obj_get_child_count(obj); ++i) checkGlyphs(lv_obj_get_child(obj, i));
+}
 static void flush(lv_display_t *display, const lv_area_t *area, uint8_t *data)
 {
     const int width = area->x2 - area->x1 + 1;
@@ -88,6 +109,8 @@ int main()
         auto *account_button = textButton(page.root(), "Яндекс"); CHECK(account_button);
         lv_obj_send_event(account_button, LV_EVENT_CLICKED, nullptr);
         auto *account_title = textButton(page.root(), "Аккаунт Яндекса"); CHECK(account_title);
+        checkGlyphs(account_title);
+        snapshot(display, "yandex-signed-out.ppm");
         auto *login = textButton(account_title, "Войти по QR"); CHECK(login);
         lv_obj_send_event(login, LV_EVENT_CLICKED, nullptr); CHECK(auth_calls == 1 && auth_action == AuthAction::Begin);
         AuthSnapshot waiting; waiting.state = AuthState::Waiting; waiting.seconds_left = 295;
@@ -97,12 +120,15 @@ int main()
         page.updateAuth(waiting);
         auto *qr = find(account_title, &lv_qrcode_class); CHECK(qr && lv_obj_is_visible(qr));
         CHECK(textButton(account_title, "Код: 1234567"));
+        checkGlyphs(account_title);
         snapshot(display, "yandex-login.ppm");
         auto *cancel_login = textButton(account_title, "Отменить вход"); CHECK(cancel_login);
         lv_obj_send_event(cancel_login, LV_EVENT_CLICKED, nullptr); CHECK(auth_calls == 2 && auth_action == AuthAction::Cancel);
         AuthSnapshot connected; connected.state = AuthState::Authorized; connected.authorized = true;
         snprintf(connected.message, sizeof(connected.message), "Аккаунт подключён"); page.updateAuth(connected);
         CHECK(!lv_obj_is_visible(qr));
+        checkGlyphs(account_title);
+        snapshot(display, "yandex-connected.ppm");
         auto *restart = textButton(account_title, "Войти заново"); CHECK(restart && lv_obj_is_visible(restart));
         lv_obj_send_event(restart, LV_EVENT_CLICKED, nullptr); CHECK(auth_calls == 3 && auth_action == AuthAction::Restart);
         page.updateAuth(waiting);
@@ -110,6 +136,12 @@ int main()
         page.updateAuth(connected);
         auto *logout = textButton(account_title, "Выйти"); CHECK(logout && lv_obj_is_visible(logout));
         lv_obj_send_event(logout, LV_EVENT_CLICKED, nullptr); CHECK(auth_calls == 4 && auth_action == AuthAction::Logout);
+        page.updateAuth(AuthSnapshot{});
+        AuthSnapshot failed; failed.state = AuthState::Error;
+        snprintf(failed.message, sizeof(failed.message), "Код устарел. Запросите новый код входа.");
+        page.updateAuth(failed);
+        checkGlyphs(account_title);
+        snapshot(display, "yandex-error.ppm");
         page.updateAuth(AuthSnapshot{});
         auto *home_tab = textButton(page.root(), "Дом"); CHECK(home_tab);
         lv_obj_send_event(home_tab, LV_EVENT_CLICKED, nullptr);
