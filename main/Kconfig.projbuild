@@ -1,12 +1,15 @@
 menu "Home Panel"
-    config HOME_PANEL_YANDEX_TOKEN
-        string "Yandex Smart Home OAuth token"
+    config HOME_PANEL_OAUTH_CLIENT_ID
+        string "Yandex OAuth Client ID"
+        default "8786096dac574329a844b79923407ffb"
+
+    config HOME_PANEL_OAUTH_CLIENT_SECRET
+        string "Yandex OAuth Client secret (local build only)"
         default ""
         help
-            Configure locally using menuconfig. Never commit this value.
-            The token is embedded in firmware; protect firmware and build files.
-            Request both iot:view and iot:control permissions in Yandex OAuth
-            to read device states and send commands from the panel.
+            Configure locally in sdkconfig; never commit the secret.
+            Device OAuth and refresh exchange require this value. It is embedded
+            in the firmware. Enable iot:view and iot:control in your OAuth app.
 
     config HOME_PANEL_REFRESH_SECONDS
         int "Device list refresh interval (seconds)"

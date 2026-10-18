@@ -128,6 +128,15 @@ DeviceManager::~DeviceManager()
     if (mutex_home_devices) vSemaphoreDelete(mutex_home_devices);
 }
 
+esp_err_t DeviceManager::clearDevices()
+{
+    if (!mutex_home_devices) return ESP_ERR_NO_MEM;
+    DeviceLock lock(mutex_home_devices);
+    if (!lock) return ESP_ERR_TIMEOUT;
+    home_devices.clear();
+    return ESP_OK;
+}
+
 esp_err_t DeviceManager::createDevicesFromJson(cJSON *root)
 {
     if (!cJSON_IsObject(root)) return ESP_ERR_INVALID_ARG;

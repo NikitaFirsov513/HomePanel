@@ -10,6 +10,9 @@
 static int calls = 0;
 static DeviceAction last{};
 static bool accept = true;
+static int auth_calls = 0;
+static AuthAction auth_action = AuthAction::Begin;
+static bool authCommand(AuthAction action) { ++auth_calls; auth_action = action; return true; }
 static bool send(const DeviceAction &action) { if (!accept) return false; ++calls; last = action; return true; }
 static lv_obj_t *find(lv_obj_t *root, const lv_obj_class_t *type)
 {
@@ -59,6 +62,7 @@ int main()
     {
         HomePage page;
         page.setActionHandler(send);
+        page.setAuthHandler(authCommand);
         Device lamp; lamp.id = "lamp"; lamp.name = "Лампочка в гостиной"; lamp.room = "Гостиная"; lamp.type = "devices.types.light";
         DeviceControl power; power.type = "devices.capabilities.on_off"; power.instance = "on"; power.known = true;
         DeviceControl brightness; brightness.type = "devices.capabilities.range"; brightness.instance = "brightness";
@@ -80,6 +84,35 @@ int main()
         lv_screen_load(page.root());
         auto &default_house = page.editor().house();
         CHECK(default_house.root() && lv_obj_is_visible(default_house.root()));
+        auto *account_button = textButton(default_house.root(), "Яндекс"); CHECK(account_button);
+        lv_obj_send_event(account_button, LV_EVENT_CLICKED, nullptr);
+        auto *account_title = textButton(page.root(), "Аккаунт Яндекса"); CHECK(account_title);
+        auto *login = textButton(account_title, "Войти по QR"); CHECK(login);
+        lv_obj_send_event(login, LV_EVENT_CLICKED, nullptr); CHECK(auth_calls == 1 && auth_action == AuthAction::Begin);
+        AuthSnapshot waiting; waiting.state = AuthState::Waiting; waiting.seconds_left = 295;
+        snprintf(waiting.user_code, sizeof(waiting.user_code), "1234567");
+        snprintf(waiting.verification_url, sizeof(waiting.verification_url), "https://ya.ru/device");
+        snprintf(waiting.message, sizeof(waiting.message), "Сканируйте QR, введите код и разрешите доступ");
+        page.updateAuth(waiting);
+        auto *qr = find(account_title, &lv_qrcode_class); CHECK(qr && lv_obj_is_visible(qr));
+        CHECK(textButton(account_title, "Код: 1234567"));
+        snapshot(display, "yandex-login.ppm");
+        auto *cancel_login = textButton(account_title, "Отменить вход"); CHECK(cancel_login);
+        lv_obj_send_event(cancel_login, LV_EVENT_CLICKED, nullptr); CHECK(auth_calls == 2 && auth_action == AuthAction::Cancel);
+        AuthSnapshot connected; connected.state = AuthState::Authorized; connected.authorized = true;
+        snprintf(connected.message, sizeof(connected.message), "Аккаунт подключён"); page.updateAuth(connected);
+        CHECK(!lv_obj_is_visible(qr));
+        auto *restart = textButton(account_title, "Войти заново"); CHECK(restart && lv_obj_is_visible(restart));
+        lv_obj_send_event(restart, LV_EVENT_CLICKED, nullptr); CHECK(auth_calls == 3 && auth_action == AuthAction::Restart);
+        page.updateAuth(waiting);
+        CHECK(lv_obj_is_visible(qr) && !lv_obj_is_visible(restart));
+        page.updateAuth(connected);
+        auto *logout = textButton(account_title, "Выйти"); CHECK(logout && lv_obj_is_visible(logout));
+        lv_obj_send_event(logout, LV_EVENT_CLICKED, nullptr); CHECK(auth_calls == 4 && auth_action == AuthAction::Logout);
+        page.updateAuth(AuthSnapshot{});
+        auto *close_account = textButton(account_title, "Закрыть"); CHECK(close_account);
+        lv_obj_send_event(close_account, LV_EVENT_CLICKED, nullptr);
+        CHECK(!lv_obj_is_visible(account_title) && lv_obj_is_visible(default_house.root()));
         CHECK(lv_obj_has_flag(page.editor().root(), LV_OBJ_FLAG_HIDDEN));
         page.setStatus("Нет подключения к сети", true);
         CHECK(textButton(default_house.root(), "Нет подключения к сети"));

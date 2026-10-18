@@ -48,6 +48,7 @@ HttpsClient::HttpsClient(const char *baseUrl)
 
     config.timeout_ms =
         10000;
+    config.disable_auto_redirect = true;
 
     client_ =
         esp_http_client_init(&config);
@@ -230,9 +231,8 @@ esp_err_t HttpsClient::event_handler(
     case HTTP_EVENT_ON_HEADER:
         ESP_LOGD(
             "HTTPS",
-            "Header: %s: %s",
-            event->header_key,
-            event->header_value);
+            "Header: %s",
+            event->header_key);
         break;
 
     case HTTP_EVENT_ON_DATA:
@@ -300,8 +300,6 @@ esp_err_t HttpsClient::event_handler(
     case HTTP_EVENT_REDIRECT:
         ESP_LOGD("HTTPS", "Redirect");
 
-        esp_http_client_set_redirection(
-            event->client);
         break;
 
     default:
@@ -441,7 +439,7 @@ HttpsRes_t HttpsClient::post(const HttpsReq_t &req)
         esp_http_client_set_header(
             client_,
             "Content-Type",
-            "application/json"
+            req.content_type ? req.content_type : "application/json"
         );
 
     if (err != ESP_OK)

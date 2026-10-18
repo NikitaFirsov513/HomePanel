@@ -20,6 +20,7 @@ public:
     void update(const FloorPlan::Document &plan, const std::vector<Device> &devices);
     void hide();
     void setStatus(const char *text, bool error = false);
+    void setAccountHandler(EditHandler handler, void *context) { account_handler_ = handler; account_context_ = context; }
     lv_obj_t *root() const { return root_; }
     lv_obj_t *canvas() const { return canvas_; }
     const HouseProjection &projection() const { return projection_; }
@@ -41,6 +42,8 @@ private:
     void *context_ = nullptr;
     DeviceHandler device_handler_ = nullptr;
     EditHandler edit_handler_ = nullptr;
+    EditHandler account_handler_ = nullptr;
+    void *account_context_ = nullptr;
     int level_filter_ = -1, wall_opacity_ = 70;
     int down_x_ = 0, down_y_ = 0;
     bool pressed_ = false, dragged_ = false;

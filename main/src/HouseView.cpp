@@ -16,7 +16,7 @@ struct HouseScene {
 extern "C" { LV_FONT_DECLARE(font_roboto_20); }
 namespace {
 constexpr uint32_t INK = 0x293246, MUTED = 0x7C879B, ACCENT = 0x6854D9;
-enum Op { Edit, Close, Rotate, Walls, FilterBase = 20, PickBase = 100, ClosePicker = 200 };
+enum Op { Edit, Close, Rotate, Walls, Account, FilterBase = 20, PickBase = 100, ClosePicker = 200 };
 const char *levelNames[] = {"Снизу", "Середина", "Сверху"};
 void surface(lv_obj_t *obj, uint32_t color, int radius = 14)
 {
@@ -131,7 +131,7 @@ void HouseView::create(lv_obj_t *parent)
     lv_obj_set_flex_align(header, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
     auto *title = label(header, "Мой дом"); lv_obj_set_width(title, 130);
     auto *subtitle = label(header, "Объёмный вид", MUTED); lv_obj_set_width(subtitle, 0); lv_obj_set_flex_grow(subtitle, 1);
-    button(header, "Редактор 2D", Edit); button(header, "Список", Close);
+    button(header, "Яндекс", Account); button(header, "Редактор 2D", Edit); button(header, "Список", Close);
     auto *tools = lv_obj_create(root_); surface(tools, 0xF3F4F8, 0); lv_obj_set_size(tools, LV_PCT(100), 44);
     lv_obj_set_flex_flow(tools, LV_FLEX_FLOW_ROW); lv_obj_set_style_pad_column(tools, 7, 0);
     for (int i = 0; i < 4; ++i) filters_.push_back(button(tools, i == 0 ? "Все уровни" : levelNames[i - 1], FilterBase + i));
@@ -195,6 +195,7 @@ void HouseView::fit()
 }
 void HouseView::perform(int action)
 {
+    if (action == Account) { if (account_handler_) account_handler_(account_context_); return; }
     if (action == Edit) { hide(); if (edit_handler_) edit_handler_(context_); return; }
     if (action == Close) { hide(); return; }
     if (action == Rotate) { projection_.rotation = (projection_.rotation + 1) % 4; fit(); return; }

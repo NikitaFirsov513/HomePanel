@@ -28,6 +28,11 @@ target_compile_features(https_client_tests PRIVATE cxx_std_17)
 target_include_directories(https_client_tests PRIVATE stubs ../main/include)
 add_test(NAME https_client COMMAND https_client_tests)
 
+add_executable(yandex_auth_tests yandex_auth_test.cpp ../main/src/YandexAuth.cpp "${CJSON_ROOT}/cJSON.c")
+target_compile_features(yandex_auth_tests PRIVATE cxx_std_17)
+target_include_directories(yandex_auth_tests PRIVATE ../main/include "${CJSON_ROOT}")
+add_test(NAME yandex_auth COMMAND yandex_auth_tests)
+
 add_executable(floor_plan_tests floor_plan_test.cpp ../main/src/FloorPlan.cpp ../main/src/HouseProjection.cpp "${CJSON_ROOT}/cJSON.c")
 target_compile_features(floor_plan_tests PRIVATE cxx_std_17)
 target_include_directories(floor_plan_tests PRIVATE ../main/include/UI "${CJSON_ROOT}")
@@ -49,13 +54,13 @@ if(HOME_PANEL_UI_TESTS)
     set(CONFIG_LV_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
     set(CONFIG_LV_USE_THORVG OFF CACHE BOOL "" FORCE)
     add_subdirectory(../managed_components/lvgl__lvgl lvgl)
-    target_compile_definitions(lvgl PUBLIC LV_USE_STDLIB_MALLOC=1 LV_USE_STDLIB_SPRINTF=1)
+    target_compile_definitions(lvgl PUBLIC LV_USE_STDLIB_MALLOC=1 LV_USE_STDLIB_SPRINTF=1 LV_USE_QRCODE=1)
     add_executable(home_page_tests home_page_test.cpp ../main/src/HomePage.cpp ../main/src/DeviceIcon.cpp
         ../main/src/FloorPlan.cpp ../main/src/FloorPlanEditor.cpp ../main/src/PlanStorage.cpp
-        ../main/src/HouseProjection.cpp ../main/src/HouseView.cpp
+        ../main/src/HouseProjection.cpp ../main/src/HouseView.cpp ../main/src/AccountView.cpp
         ../main/src/DeviceManager.cpp ../main/fonts/font_roboto_20.c "${CJSON_ROOT}/cJSON.c")
     target_compile_features(home_page_tests PRIVATE cxx_std_17)
-    target_include_directories(home_page_tests PRIVATE stubs ../main/include/Device
+    target_include_directories(home_page_tests PRIVATE stubs ../main/include ../main/include/Device
         ../main/include/UI ../main/include/UI/pages "${CJSON_ROOT}")
     target_link_libraries(home_page_tests PRIVATE lvgl)
     add_test(NAME home_page COMMAND home_page_tests)
@@ -67,7 +72,7 @@ if(MSVC)
     file(GLOB_RECURSE project_headers CONFIGURE_DEPENDS
         "${CMAKE_CURRENT_LIST_DIR}/../main/include/*.hpp"
         "${CMAKE_CURRENT_LIST_DIR}/stubs/*.h")
-    foreach(test_target device_manager_tests https_client_tests floor_plan_tests dma_compat_tests home_page_tests)
+    foreach(test_target device_manager_tests https_client_tests yandex_auth_tests floor_plan_tests dma_compat_tests home_page_tests)
         if(TARGET ${test_target})
             get_target_property(test_sources ${test_target} SOURCES)
             set_property(SOURCE ${test_sources} APPEND PROPERTY OBJECT_DEPENDS ${project_headers})

@@ -25,5 +25,6 @@ public:
     DeviceManager &operator=(const DeviceManager &) = delete;
     esp_err_t getDevices(std::vector<Device> &devices);
     esp_err_t createDevicesFromJson(cJSON *root);
+    esp_err_t clearDevices();
     std::optional<Device> getDeviceById(const std::string &id);
 };

@@ -9,6 +9,9 @@ idf_component_register(
     "src/main.cpp"
     "src/ethernet_init.c"
     "src/HttpsClient.cpp"
+    "src/YandexAuth.cpp"
+    "src/AuthStorage.cpp"
+    "src/AccountView.cpp"
     "src/DeviceManager.cpp"
     "src/DeviceAction.cpp"
     "src/DeviceIcon.cpp"
@@ -41,6 +44,8 @@ idf_component_register(
     esp_eth
     esp_netif
     nvs_flash
+    esp_timer
+    esp_hw_support
     ${json_requirements}
     mbedtls
 )

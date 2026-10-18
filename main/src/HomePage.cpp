@@ -234,6 +234,17 @@ void HomePage::create()
     lv_obj_set_width(plan, 152);
     lv_obj_align(plan, LV_ALIGN_RIGHT_MID, -160, 0);
     lv_obj_set_width(count_, 230);
+    auto *account = button(header, "Яндекс");
+    lv_obj_set_width(account, 112); lv_obj_align(account, LV_ALIGN_RIGHT_MID, -440, 0);
+    lv_obj_set_width(count_, 230);
+    lv_obj_add_event_cb(account, [](lv_event_t *event) {
+        auto *page = static_cast<HomePage *>(lv_event_get_user_data(event));
+        if (!page->busy_) page->account_.show(page->root_);
+    }, LV_EVENT_CLICKED, this);
+    editor_.house().setAccountHandler([](void *context) {
+        auto *page = static_cast<HomePage *>(context);
+        if (!page->busy_) page->account_.show(page->root_);
+    }, this);
     lv_obj_add_event_cb(plan, [](lv_event_t *event) {
         auto *page = static_cast<HomePage *>(lv_event_get_user_data(event));
         if (!page->busy_) page->editor_.show(page->root_);
@@ -321,6 +332,16 @@ void HomePage::create(DeviceManager *device_manager)
     if (!device_manager) return;
     std::vector<Device> devices;
     if (device_manager->getDevices(devices) == ESP_OK) update(devices);
+}
+
+void HomePage::updateAuth(const AuthSnapshot &snapshot)
+{
+    create();
+    account_.update(snapshot);
+    if (!snapshot.authorized) {
+        busy_ = false;
+        if (!expanded_id_.empty()) closeDetails();
+    }
 }
 
 void HomePage::update(const std::vector<Device> &devices)

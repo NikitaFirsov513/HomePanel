@@ -34,6 +34,7 @@ struct HttpsReq_t
     const char *token = nullptr;
     const char *body = nullptr;
     int timeout_ms = 10000;
+    const char *content_type = "application/json";
 };
 class HttpsClient
 {

@@ -76,6 +76,9 @@ void UiManager::ui_process_message(const UiMessage &msg)
     }
     ESP_ERROR_CHECK(bsp_display_lock(-1));
     switch (msg.type) {
+    case UiMessageType::AUTH_STATE:
+        home_page_.updateAuth(msg.auth);
+        break;
     case UiMessageType::SET_LOAD_PAGE:
     case UiMessageType::SET_ERROR_PAGE:
         // The local floor-plan editor remains accessible while offline.
@@ -137,6 +140,12 @@ esp_err_t UiManager::setControlResult(DeviceManager *devices, const char *text, 
 esp_err_t UiManager::updateMainPage(DeviceManager *device_manager)
 {
     return setHomePage(device_manager);
+}
+
+esp_err_t UiManager::setAuthState(const AuthSnapshot &snapshot)
+{
+    UiMessage msg{}; msg.type = UiMessageType::AUTH_STATE; msg.auth = snapshot;
+    return ui_send(msg) ? ESP_OK : ESP_FAIL;
 }
 
 bool UiManager::ui_send(const UiMessage &msg)

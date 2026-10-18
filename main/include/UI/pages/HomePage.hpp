@@ -4,6 +4,7 @@
 #include "DeviceManager.hpp"
 #include "DeviceAction.hpp"
 #include "FloorPlanEditor.hpp"
+#include "AccountView.hpp"
 class HomePage : public Page
 {
 public:
@@ -15,6 +16,8 @@ public:
     void setStatus(const char *text, bool error, bool finished = true);
     bool busy() const { return busy_; }
     FloorPlanEditor &editor() { return editor_; }
+    void setAuthHandler(AccountView::Handler handler) { account_.setHandler(handler); }
+    void updateAuth(const AuthSnapshot &snapshot);
 
 private:
     lv_obj_t *list_ = nullptr;
@@ -40,4 +43,5 @@ private:
     void submit(const DeviceAction &action);
     void bind(lv_obj_t *widget, Binding *binding, lv_event_code_t code);
     FloorPlanEditor editor_;
+    AccountView account_;
 };

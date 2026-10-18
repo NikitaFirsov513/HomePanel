@@ -21,6 +21,7 @@ enum class UiMessageType : uint8_t
     SET_ERROR_PAGE,
     SET_HOME_PAGE,
     CONTROL_RESULT,
+    AUTH_STATE,
 };
 
 struct UiMessage
@@ -31,6 +32,7 @@ struct UiMessage
     DeviceManager *device_manager = nullptr;
     bool error = false;
     bool finished = true;
+    AuthSnapshot auth;
 };
 static_assert(std::is_trivially_copyable<UiMessage>::value,
               "FreeRTOS queues require trivially copyable messages");
@@ -50,6 +52,8 @@ public:
     esp_err_t setErrorPage(const char *text);
     esp_err_t setHomePage(DeviceManager *device_manager);
     void setActionHandler(HomePage::ActionHandler handler) { home_page_.setActionHandler(handler); }
+    void setAuthHandler(AccountView::Handler handler) { home_page_.setAuthHandler(handler); }
+    esp_err_t setAuthState(const AuthSnapshot &snapshot);
     esp_err_t setControlResult(DeviceManager *devices, const char *text, bool error, bool finished = true);
 
 private:

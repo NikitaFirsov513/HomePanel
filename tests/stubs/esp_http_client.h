@@ -24,6 +24,7 @@ struct esp_http_client_config_t {
     esp_err_t (*event_handler)(esp_http_client_event_t *) = nullptr;
     void *user_data = nullptr;
     int timeout_ms = 0;
+    bool disable_auto_redirect = false;
 };
 esp_http_client_handle_t esp_http_client_init(const esp_http_client_config_t *);
 esp_err_t esp_http_client_cleanup(esp_http_client_handle_t);

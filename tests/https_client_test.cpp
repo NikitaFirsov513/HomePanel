@@ -76,6 +76,7 @@ int main()
         request.path = "/devices";
         request.token = "unit-test";
         auto response = https.send(request);
+        CHECK(client->config.disable_auto_redirect);
         CHECK(missing_content_type == 1);
         CHECK(requests == 1 && response.ok());
         CHECK(response.body_len == payload.size());
@@ -89,6 +90,11 @@ int main()
         request.body = "{}";
         CHECK(https.send(request).ok());
         CHECK(client->body == "{}" && client->headers.at("Content-Type") == "application/json");
+        request.content_type = "application/x-www-form-urlencoded";
+        request.body = "grant_type=device_code&code=test";
+        request.token = nullptr;
+        CHECK(https.send(request).ok());
+        CHECK(client->headers.at("Content-Type") == "application/x-www-form-urlencoded" && client->headers.count("Authorization") == 0);
         request.method = HTTP_METHOD_GET;
         request.token = nullptr;
         CHECK(https.send(request).ok());
