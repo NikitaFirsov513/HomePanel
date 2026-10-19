@@ -196,7 +196,13 @@ HttpsRes_t HttpsClient::perform()
             esp_err_to_name(
                 response.transport_error),
             response.http_status);
-
+#ifdef ESP_PLATFORM
+        ESP_LOGE("HTTPS", "Heap: internal free=%u largest=%u; PSRAM free=%u largest=%u",
+            unsigned(heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT)),
+            unsigned(heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT)),
+            unsigned(heap_caps_get_free_size(MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT)),
+            unsigned(heap_caps_get_largest_free_block(MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT)));
+#endif
         return response;
     }
 

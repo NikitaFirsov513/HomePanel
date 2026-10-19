@@ -26,6 +26,7 @@ idf_component_register(
     "src/HomePage.cpp"
     "src/LoadingPage.cpp"
     "src/FloorPlan.cpp"
+    "src/FloorGeometry.cpp"
     "src/FloorPlanEditor.cpp"
     "src/PlanStorage.cpp"
     "src/HouseProjection.cpp"

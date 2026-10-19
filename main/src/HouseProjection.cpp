@@ -15,8 +15,8 @@ double HouseProjection::levelHeight(PlanLevel level)
 }
 HousePosition HouseProjection::devicePosition(const PlanRoom &room, const PlanPlacement &device)
 {
-    return {room.rect.x + room.rect.w * device.u / 1000.0,
-            room.rect.y + room.rect.h * device.v / 1000.0, levelHeight(device.level)};
+    const auto p=roomInterior(room,{room.rect.x+room.rect.w*device.u/1000.0,room.rect.y+room.rect.h*device.v/1000.0});
+    return {p.x,p.y,levelHeight(device.level)};
 }
 namespace {
 HousePoint rotate(double x, double y, int rotation)
@@ -69,9 +69,10 @@ std::vector<HouseWall> houseWalls(const FloorPlan::Document &plan)
     // (vertical, fixed coordinate, interval start), at half-metre resolution.
     std::set<std::tuple<bool, int, int>> edges;
     for (const auto &room : plan.rooms) {
-        const auto &r = room.rect;
-        for (int x = r.x; x < r.x + r.w; ++x) { edges.emplace(false, r.y, x); edges.emplace(false, r.y + r.h, x); }
-        for (int y = r.y; y < r.y + r.h; ++y) { edges.emplace(true, r.x, y); edges.emplace(true, r.x + r.w, y); }
+        for(const auto &wall:roomWalls(room)) {
+            const bool vertical=wall.x1==wall.x2;
+            for(int at=vertical?wall.y1:wall.x1; at<(vertical?wall.y2:wall.x2); ++at) edges.emplace(vertical,vertical?wall.x1:wall.y1,at);
+        }
     }
     std::vector<HouseWall> result;
     for (auto it = edges.begin(); it != edges.end();) {
@@ -94,12 +95,12 @@ std::vector<HouseAperture> wallApertures(const HouseWall &wall, const FloorPlan:
         if (room == plan.rooms.end()) continue;
         const bool ov = o.edge == PlanEdge::Left || o.edge == PlanEdge::Right;
         if (ov != vertical) continue;
-        const auto &r = room->rect;
-        const double fixed = ov ? r.x + (o.edge == PlanEdge::Right ? r.w : 0) : r.y + (o.edge == PlanEdge::Bottom ? r.h : 0);
+        const auto point=openingPosition(*room,o);
+        const double fixed=ov?point.x:point.y;
         if (std::abs(fixed - (vertical ? wall.x1 : wall.y1)) > 0.001) continue;
-        const double center = ov ? r.y + r.h * o.offset / 1000.0 : r.x + r.w * o.offset / 1000.0;
-        const double half = o.window ? 1.2 : 0.8;
-        const double from = std::max(start, center - half), to = std::min(end, center + half);
+        const double center=ov?point.y:point.x;
+        const auto range=openingSegment(*room,o);
+        const double from=std::max(start,vertical?range.from.y:range.from.x),to=std::min(end,vertical?range.to.y:range.to.x);
         if (to > from) result.push_back({from - start, to - start, o.window});
     }
     return result;

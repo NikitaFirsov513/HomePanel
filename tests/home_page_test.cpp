@@ -1,3 +1,4 @@
+#include "PlanStorage.hpp"
 #include "LoadingPage.hpp"
 #include "HomePage.hpp"
 #include <cstdio>
@@ -70,6 +71,8 @@ static void flush(lv_display_t *display, const lv_area_t *area, uint8_t *data)
 static void snapshot(lv_display_t *display, const char *path)
 {
     lv_obj_update_layout(lv_screen_active());
+    lv_obj_invalidate(lv_screen_active());
+    lv_tick_inc(20);
     lv_refr_now(display);
     FILE *image = fopen(path, "wb"); CHECK(image);
     fprintf(image, "P6\n1024 600\n255\n");
@@ -736,6 +739,57 @@ int main()
         CHECK(!lv_obj_is_visible(textButton(page.root(), "Устройств пока нет")));
         CHECK(!find(page.root(), &lv_spinner_class));
         checkGlyphs(page.root());
+    }
+    {
+        FloorPlan initial;const auto id=initial.addRoom({2,2,10,10});CHECK(id); CHECK(initial.renameRoom(id,"Гостиная"));
+        std::vector<Device> lights;
+        for(int i=0;i<3;++i) {
+            Device d;d.id="shape-"+std::to_string(i);d.name="Лампа "+std::to_string(i+1);d.type="devices.types.light";
+            DeviceControl c;c.type="devices.capabilities.on_off";c.instance="on";c.known=true;c.boolean=true;d.controls.push_back(c);lights.push_back(d);
+            PlanPlacement p;p.room_id=id;p.device_id=devicePlanKey(d);p.name=d.name;p.type=d.type;p.u=i==2?800:200;p.v=i==0?200:800;p.level=PlanLevel(i);CHECK(initial.placeDevice(p));
+        }
+        CHECK(saveFloorPlan(initial.serialize()));
+        HomePage page;AuthSnapshot auth;auth.authorized=true;auth.state=AuthState::Authorized;page.updateAuth(auth);page.update(lights);
+        lv_screen_load(page.root());page.navigate(HomePage::View::Plan);auto &editor=page.editor();lv_obj_update_layout(editor.root());
+        auto tap=[&](double x,double y){const auto p=editor.gridPoint(x,y);editor.pointerDown(p.x,p.y);editor.pointerUp(p.x,p.y);};
+        auto drag=[&](double x,double y,double x1,double y1){const auto a=editor.gridPoint(x,y),b=editor.gridPoint(x1,y1);editor.pointerDown(a.x,a.y);editor.pointerMove(b.x,b.y);editor.pointerUp(b.x,b.y);lv_obj_update_layout(editor.root());};
+        editor.setTool(FloorPlanEditor::Tool::Select);tap(4,6);
+        auto *cut=textButton(editor.root(),"Вырезать участок");CHECK(cut);lv_obj_send_event(cut,LV_EVENT_CLICKED,nullptr);
+        drag(7,2,12,7);CHECK(!editor.plan().room(id)->parts.empty());CHECK(!roomContains(*editor.plan().room(id),9,4));
+        checkGlyphs(editor.root());snapshot(display,"room-shape-editor.ppm");
+        editor.setTool(FloorPlanEditor::Tool::Door);tap(9,7.1);
+        CHECK(!editor.plan().document().openings.empty() && editor.plan().document().openings.back().inset==5);
+        page.navigate(HomePage::View::House);lv_obj_update_layout(page.root());snapshot(display,"room-shape-house.ppm");
+        auto &house=editor.house();for(int r=0;r<4;++r) {if(r) { auto *rotate=textButton(house.root(),"Поворот");CHECK(rotate);lv_obj_send_event(rotate,LV_EVENT_CLICKED,nullptr); }lv_obj_update_layout(page.root());snapshot(display,("room-shape-house-"+std::to_string(r)+".ppm").c_str());}
+        page.navigate(HomePage::View::Plan);editor.setTool(FloorPlanEditor::Tool::Select);tap(4,6);
+        auto *extend=textButton(editor.root(),"Добавить участок");CHECK(extend);lv_obj_send_event(extend,LV_EVENT_CLICKED,nullptr);
+        drag(12,7,16,12);CHECK(editor.plan().room(id)->rect.w==14);
+        auto *undo=textButton(editor.root(),"Отменить");CHECK(undo);lv_obj_send_event(undo,LV_EVENT_CLICKED,nullptr);CHECK(editor.plan().room(id)->rect.w==10);
+        editor.setTool(FloorPlanEditor::Tool::Select);tap(4,6);
+        const auto unchanged=editor.plan().serialize();const auto corner=editor.gridPoint(12,12),invalid=editor.gridPoint(1,1);
+        editor.pointerDown(corner.x,corner.y);editor.pointerMove(invalid.x,invalid.y);snapshot(display,"room-shape-invalid-resize.ppm");
+        editor.pointerUp(invalid.x,invalid.y);CHECK(editor.plan().serialize()==unchanged);
+        auto *save=textButton(editor.root(),"Сохранить");CHECK(save);lv_obj_send_event(save,LV_EVENT_CLICKED,nullptr);
+        std::string json;CHECK(loadFloorPlan(json)==PlanLoadResult::Loaded);FloorPlan restored;CHECK(restored.load(json) && !restored.room(id)->parts.empty());
+    }
+    {
+        FloorPlan initial;const auto id=initial.addRoom({2,2,10,10});CHECK(id);CHECK(saveFloorPlan(initial.serialize()));
+        HomePage page;page.navigate(HomePage::View::Plan);lv_screen_load(page.root());auto &editor=page.editor();lv_obj_update_layout(editor.root());
+        auto tap=[&](double x,double y){const auto p=editor.gridPoint(x,y);editor.pointerDown(p.x,p.y);editor.pointerUp(p.x,p.y);};
+        editor.setTool(FloorPlanEditor::Tool::Select);tap(5,5);
+        auto *right=textButton(editor.root(),LV_SYMBOL_RIGHT);CHECK(right);
+        lv_obj_send_event(right,LV_EVENT_CLICKED,nullptr);CHECK(editor.plan().room(id)->rect.x==3);
+        CHECK(textButton(editor.root(),LV_SYMBOL_RIGHT)==right); // Repeated taps retain the same button.
+        lv_obj_send_event(right,LV_EVENT_CLICKED,nullptr);CHECK(editor.plan().room(id)->rect.x==4);
+        auto *up=textButton(editor.root(),LV_SYMBOL_UP);CHECK(up);lv_obj_send_event(up,LV_EVENT_CLICKED,nullptr);CHECK(editor.plan().room(id)->rect.y==1);
+        auto *undo=textButton(editor.root(),"Отменить");lv_obj_send_event(undo,LV_EVENT_CLICKED,nullptr);CHECK(editor.plan().room(id)->rect.y==2);
+        editor.setTool(FloorPlanEditor::Tool::Window);tap(6.5,2.1);tap(8.5,2.1);tap(10.5,2.1);
+        CHECK(editor.plan().document().openings.size()==1 && editor.plan().document().openings[0].span>6000);
+        editor.setTool(FloorPlanEditor::Tool::Select);tap(5.7,2);
+        CHECK(textButton(editor.root(),"Окно"));CHECK(lv_obj_has_state(textButton(editor.root(),LV_SYMBOL_UP),LV_STATE_DISABLED));
+        right=textButton(editor.root(),LV_SYMBOL_RIGHT);lv_obj_send_event(right,LV_EVENT_CLICKED,nullptr);
+        CHECK(editor.plan().document().openings.size()==1);checkGlyphs(editor.root());snapshot(display,"wide-window-editor.ppm");
+        page.navigate(HomePage::View::House);snapshot(display,"wide-window-house.ppm");
     }
     lv_display_delete(display);
     lv_deinit();

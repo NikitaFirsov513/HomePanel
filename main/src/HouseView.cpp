@@ -323,13 +323,14 @@ void HouseView::buildScene()
     });
     const uint32_t floor_colors[] = {0xEFECFA, 0xE5F2EF, 0xFCF0DB, 0xE6EEFA, 0xF8E8EF};
     for (const auto *r : rooms) {
-        const double x = r->rect.x, y = r->rect.y, x1 = x + r->rect.w, y1 = y + r->rect.h;
+        for(const auto &wall:roomWalls(*r)) paint.quad({HousePosition{double(wall.x1),double(wall.y1),-0.35},
+            {double(wall.x2),double(wall.y2),-0.35},{double(wall.x2),double(wall.y2),0},{double(wall.x1),double(wall.y1),0}},0xC7CDDA);
+        for(const auto &part:roomParts(*r)) {
+        const double x = part.x, y = part.y, x1 = x + part.w, y1 = y + part.h;
         auto shadow = std::array<HousePoint, 4>{projection_.project({x, y, -0.2}), projection_.project({x1, y, -0.2}),
                                                projection_.project({x1, y1, -0.2}), projection_.project({x, y1, -0.2})};
         for (auto &point : shadow) { point.y += 9; point.x += 4; }
         paint.polygon(shadow, 0x7B88A4, 24);
-        paint.quad({HousePosition{x, y1, -0.35}, {x1, y1, -0.35}, {x1, y1, 0}, {x, y1, 0}}, 0xC7CDDA);
-        paint.quad({HousePosition{x1, y, -0.35}, {x1, y1, -0.35}, {x1, y1, 0}, {x1, y, 0}}, 0xC7CDDA);
         uint32_t floor = floor_colors[(r->id - 1) % 5];
         bool lit = false;
         for (const auto &p : plan_.devices) {
@@ -339,12 +340,14 @@ void HouseView::buildScene()
         }
         if (lit) floor = 0xFFF1CC;
         const auto points = paint.quad({HousePosition{x, y, 0}, {x1, y, 0}, {x1, y1, 0}, {x, y1, 0}}, floor);
-        for (int i = 0; i < 4; ++i) paint.line(points[i], points[(i + 1) % 4], 0xBCC5D7, 1);
+        (void)points;
         // Fine floor seams follow the room's own axes through camera rotation.
-        for (double gx = x + 2; gx < x1; gx += 2)
+        for (double gx = std::floor(x / 2) * 2 + 2; gx < x1; gx += 2)
             paint.line(projection_.project({gx, y, 0}), projection_.project({gx, y1, 0}), 0xFFFFFF, 1, 95);
-        for (double gy = y + 2; gy < y1; gy += 2)
+        for (double gy = std::floor(y / 2) * 2 + 2; gy < y1; gy += 2)
             paint.line(projection_.project({x, gy, 0}), projection_.project({x1, gy, 0}), 0xFFFFFF, 1, 95);
+            }
+        for(const auto &wall:roomWalls(*r)) paint.line(projection_.project({double(wall.x1),double(wall.y1),0}),projection_.project({double(wall.x2),double(wall.y2),0}),0xBCC5D7,1);
     }
     std::vector<size_t> order;
     for (size_t i = 0; i < walls_.size(); ++i) order.push_back(i);
@@ -394,7 +397,8 @@ void HouseView::buildScene()
         paint.line(projection_.project(position(length, 0)), b, 0xA4B3CE, 1, 140);
     }
     for (const auto *r : rooms) {
-        const auto anchor = projection_.project({r->rect.x + r->rect.w * 0.5, r->rect.y + r->rect.h * 0.5, 0});
+        const auto label_point=roomInterior(*r,{r->rect.x+r->rect.w*0.5,r->rect.y+r->rect.h*0.5});
+        const auto anchor = projection_.project({label_point.x,label_point.y,0});
         lv_point_t size;
         lv_text_get_size(&size, r->name.c_str(), &font_roboto_20, 0, 0, 220, LV_TEXT_FLAG_NONE);
         const int width = std::min<int>(220, size.x);

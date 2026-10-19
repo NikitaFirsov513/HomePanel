@@ -42,7 +42,7 @@ int main()
     CHECK(restored.removeDevice(p.device_id) && restored.undo());
     CHECK(restored.removeOpening(door) && restored.undo());
     const auto before = restored.serialize();
-    const char *bad[] = {"null", "{}", "{", "[]", R"({"version":2,"rooms":[],"devices":[],"openings":[]})",
+    const char *bad[] = {"null", "{}", "{", "[]", R"({"version":99,"rooms":[],"devices":[],"openings":[]})",
         R"({"version":1,"rooms":[{"id":1,"name":"A","x":0,"y":0,"w":8,"h":6},{"id":2,"name":"B","x":1,"y":1,"w":8,"h":6}],"devices":[],"openings":[]})",
         R"({"version":1,"rooms":[{"id":1,"name":"A","x":1.5,"y":0,"w":8,"h":6}],"devices":[],"openings":[]})",
         R"({"version":1,"rooms":[],"devices":[{"device_id":"a","name":"L","type":"light","room_id":1,"u":500,"v":500,"level":1}],"openings":[]})"};
@@ -87,6 +87,65 @@ int main()
         CHECK(std::abs(floor.x - middle.x) < 0.001 && std::abs(floor.x - ceiling.x) < 0.001);
         CHECK(floor.y > middle.y && middle.y > ceiling.y);
         CHECK(std::abs(floor.y - ceiling.y - projection.scale * 5.0) < 0.001);
+    }
+    FloorPlan shaped;
+    const auto shape=shaped.addRoom({2,2,10,10}); CHECK(shape);
+    PlanPlacement pin; pin.room_id=shape;pin.device_id="shape-lamp";pin.name="Lamp";pin.type="light";pin.u=800;pin.v=200;pin.level=PlanLevel::Ceiling;
+    CHECK(shaped.placeDevice(pin));
+    const auto removed_door=shaped.addOpening(shape,PlanEdge::Top,800,false); CHECK(removed_door);
+    CHECK(shaped.editRoom(shape,{7,2,5,5},true));
+    CHECK(!shaped.room(shape)->parts.empty() && !roomContains(*shaped.room(shape),9,4));
+    CHECK(roomContains(*shaped.room(shape),4,4) && roomContains(*shaped.room(shape),9,9));
+    CHECK(shaped.document().openings.empty());
+    const auto relocated=HouseProjection::devicePosition(*shaped.room(shape),*shaped.placement(pin.device_id));
+    CHECK(roomContains(*shaped.room(shape),relocated.x,relocated.y) && relocated.z==HouseProjection::levelHeight(PlanLevel::Ceiling));
+    pin.u=800;pin.v=200; CHECK(!shaped.placeDevice(pin));
+    CHECK(shaped.canPlace({7,2,5,5}));
+    const auto neighbour=shaped.addRoom({7,2,5,5});CHECK(neighbour);
+    CHECK(!shaped.editRoom(shape,{7,2,5,5},false)); CHECK(shaped.removeRoom(neighbour));
+    const auto inner_door=shaped.addOpening(shape,PlanEdge::Top,700,false,5);CHECK(inner_door);
+    CHECK(shaped.addOpening(shape,PlanEdge::Right,200,true,5));
+    CHECK(!shaped.editRoom(shape,{8,3,2,2},true)); // No-op cuts do not create history entries.
+    CHECK(!shaped.addOpening(shape,PlanEdge::Top,800,false)); // Missing outer wall.
+    int inner_apertures=0;
+    for(const auto &wall:houseWalls(shaped.document())) for(const auto &ap:wallApertures(wall,shaped.document())) {++inner_apertures;CHECK(ap.to>ap.from);}
+    CHECK(inner_apertures==2);
+    const auto shaped_json=shaped.serialize(); FloorPlan loaded_shape;CHECK(loaded_shape.load(shaped_json));
+    CHECK(loaded_shape.serialize()==shaped_json && !loaded_shape.room(shape)->parts.empty());
+    const auto before_extend=HouseProjection::devicePosition(*shaped.room(shape),*shaped.placement("shape-lamp"));
+    CHECK(shaped.editRoom(shape,{12,7,4,5},false));
+    const auto after_extend=HouseProjection::devicePosition(*shaped.room(shape),*shaped.placement("shape-lamp"));
+    CHECK(std::hypot(before_extend.x-after_extend.x,before_extend.y-after_extend.y)<0.02);
+    CHECK(shaped.undo() && shaped.serialize()==shaped_json);
+    CHECK(!shaped.editRoom(shape,{25,2,3,3},false)); // Detached islands are not rooms.
+    CHECK(!shaped.editRoom(shape,{4,2,1,10},true)); // Cannot split the room.
+    CHECK(!shaped.editRoom(shape,{2,2,10,10},true));
+    CHECK(shaped.editRoom(shape,{7,2,5,5},false) && shaped.room(shape)->parts.empty());
+    CHECK(shaped.document().openings.empty() && shaped.undo() && shaped.serialize()==shaped_json);
+    CHECK(shaped.changeRoom(shape,{3,3,12,12}));
+    CHECK(!roomContains(*shaped.room(shape),13,5));
+    FloorPlan ring; const auto ring_id=ring.addRoom({2,2,12,12}); CHECK(ring.editRoom(ring_id,{6,6,4,4},true));
+    CHECK(!roomContains(*ring.room(ring_id),8,8) && roomWalls(*ring.room(ring_id)).size()==8);
+    FloorPlan ring_loaded;CHECK(ring_loaded.load(ring.serialize()));
+    CHECK(!ring_loaded.load(R"({"version":2,"rooms":[{"id":1,"name":"bad","x":2,"y":2,"w":10,"h":10,"parts":[[2,2,3,3],[9,9,3,3]]}],"devices":[],"openings":[]})"));
+    { FloorPlan windows; const auto wr=windows.addRoom({2,2,10,10});CHECK(wr);
+    const auto first=windows.addOpening(wr,PlanEdge::Top,250,true);CHECK(first);
+    CHECK(windows.addOpening(wr,PlanEdge::Top,450,true)==first);
+    CHECK(windows.addOpening(wr,PlanEdge::Top,650,true)==first);
+    CHECK(windows.document().openings.size()==1 && windows.document().openings[0].span==6400);
+    const auto wide=openingSegment(*windows.room(wr),windows.document().openings[0]);
+    CHECK(std::abs(wide.to.x-wide.from.x-6.4)<0.01);
+    const auto windows_json=windows.serialize();FloorPlan reloaded;CHECK(reloaded.load(windows_json));CHECK(reloaded.serialize()==windows_json);
+    CHECK(!windows.addOpening(wr,PlanEdge::Top,500,false));
+    CHECK(windows.moveOpening(first,1)==first);CHECK(windows.document().openings[0].offset==550);
+    CHECK(windows.undo() && windows.serialize()==windows_json);
+    CHECK(windows.undo() && windows.document().openings[0].span==4400);
+    CHECK(windows.addOpening(wr,PlanEdge::Bottom,500,true));CHECK(windows.document().openings.size()==2);
+    FloorPlan separated;const auto sr=separated.addRoom({2,2,16,10});CHECK(sr);
+    const auto sw=separated.addOpening(sr,PlanEdge::Top,200,true);CHECK(sw);
+    CHECK(separated.addOpening(sr,PlanEdge::Top,700,true));CHECK(separated.document().openings.size()==2);
+    CHECK(separated.moveOpening(sw,1)==sw);CHECK(separated.document().openings.size()==2);
+    CHECK(!separated.moveOpening(sw,-20));
     }
     puts("Floor plan persistence, geometry, projection and undo tests passed");
 }

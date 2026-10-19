@@ -10,7 +10,7 @@ namespace {
 constexpr uint32_t INK = 0x242B3A, MUTED = 0x7C8495, PURPLE = 0x6854D9;
 enum Op { Undo = 10, Save, Close, ZoomOut, ZoomIn, Fit, Rename, Delete,
           WidthDown = 20, WidthUp, HeightDown, HeightUp,
-          LevelBase = 30, NameKey = 40, NameAccept, NameCancel, NameClear, NameBackspace, NamePreset, OpenHouse = 50 };
+          LevelBase = 30, NameKey = 40, NameAccept, NameCancel, NameClear, NameBackspace, NamePreset, OpenHouse = 50, ExtendArea = 60, CutArea, NudgeLeft = 70, NudgeRight, NudgeUp, NudgeDown };
 void surface(lv_obj_t *obj, uint32_t color = 0xFFFFFF, int radius = 14)
 {
     lv_obj_set_style_bg_color(obj, lv_color_hex(color), 0);
@@ -108,6 +108,7 @@ void FloorPlanEditor::create(lv_obj_t *parent)
     std::string json;
     const auto loaded = loadFloorPlan(json);
     const bool load_error = loaded == PlanLoadResult::Error || (loaded == PlanLoadResult::Loaded && !plan_.load(json));
+    cacheWalls();
     refreshSidebar();
     setTool(plan_.document().rooms.empty() ? Tool::Room : Tool::Select);
     if (load_error) message("Не удалось прочитать сохранённый план. Сохранение заменит его.", true);
@@ -185,17 +186,26 @@ void FloorPlanEditor::setTool(Tool tool)
         "Потяните по свободной сетке, чтобы нарисовать комнату. Шаг - 0.5 м.",
         "Выберите устройство справа, затем коснитесь нужного места в комнате.",
         "Коснитесь стены комнаты, чтобы добавить дверь.", "Коснитесь стены комнаты, чтобы добавить окно.",
-        "Тяните план для перемещения обзора. Кнопки - и + меняют масштаб."};
+        "Тяните план для перемещения обзора. Кнопки - и + меняют масштаб.",
+        "Выделите прямоугольный участок, примыкающий к выбранной комнате.",
+        "Выделите участок, который нужно вырезать из выбранной комнаты."};
     message(tips[static_cast<int>(tool)]);
     if (sidebar_) refreshSidebar();
 }
 void FloorPlanEditor::clearSelection() { selected_room_ = selected_opening_ = 0; selected_device_.clear(); }
-void FloorPlanEditor::changed(const char *text)
+void FloorPlanEditor::cacheWalls()
+{
+    wall_cache_.clear();
+    for(const auto &r:plan_.document().rooms) wall_cache_.push_back({r.id,roomWalls(r)});
+}
+void FloorPlanEditor::changed(const char *text, bool refresh)
 {
     lv_label_set_text(saved_label_, plan_.dirty() ? "Есть изменения" : "План сохранён");
     lv_obj_set_style_text_color(saved_label_, lv_color_hex(plan_.dirty() ? PURPLE : MUTED), 0);
     lv_obj_set_disabled(undo_, !plan_.canUndo());
-    refreshSidebar(); lv_obj_invalidate(canvas_); message(text);
+    cacheWalls();
+    if(refresh) refreshSidebar();
+    lv_obj_invalidate(canvas_); message(text);
     if (house_.root()) house_.update(plan_.document(), devices_);
 }
 void FloorPlanEditor::refreshSidebar()
@@ -204,6 +214,22 @@ void FloorPlanEditor::refreshSidebar()
     lv_obj_clean(sidebar_);
     const auto *placement = plan_.placement(selected_device_);
     const auto *room = plan_.room(selected_room_);
+    if(placement || room || selected_opening_) {
+        label(sidebar_, "Сдвиг: 0.5 м", MUTED);
+        auto *row=lv_obj_create(sidebar_); surface(row);lv_obj_set_size(row,LV_PCT(100),44);
+        lv_obj_set_flex_flow(row,LV_FLEX_FLOW_ROW);lv_obj_set_style_pad_column(row,6,0);
+        const char *arrows[]={LV_SYMBOL_LEFT,LV_SYMBOL_RIGHT,LV_SYMBOL_UP,LV_SYMBOL_DOWN};
+        for(int i=0;i<4;++i) {
+            auto *button=actionButton(row,arrows[i],NudgeLeft+i);lv_obj_set_width(button,44);
+            lv_obj_set_style_text_font(lv_obj_get_child(button,0),LV_FONT_DEFAULT,0);
+            bool disabled=placement && !deviceAvailable(placement->device_id);
+            for(const auto &o:plan_.document().openings) if(o.id==selected_opening_) {
+                const bool horizontal=o.edge==PlanEdge::Top || o.edge==PlanEdge::Bottom;
+                disabled=horizontal?(i>=2):(i<2);
+            }
+            lv_obj_set_disabled(button,disabled);
+        }
+    }
     if (placement) {
         const bool available = deviceAvailable(placement->device_id);
         label(sidebar_, placement->name.c_str(), available ? INK : MUTED);
@@ -218,6 +244,11 @@ void FloorPlanEditor::refreshSidebar()
         label(sidebar_, room->name.c_str());
         char size[64]; snprintf(size, sizeof(size), "%g x %g м", room->rect.w * 0.5, room->rect.h * 0.5);
         label(sidebar_, size, MUTED);
+        label(sidebar_, "Форма комнаты", MUTED);
+        auto *extend=actionButton(sidebar_, "Добавить участок", ExtendArea); lv_obj_set_width(extend,LV_PCT(100));
+        auto *cut=actionButton(sidebar_, "Вырезать участок", CutArea); lv_obj_set_width(cut,LV_PCT(100));
+        char area[64]; double cells=0; for(const auto &part:roomParts(*room)) cells+=part.w*part.h;
+        snprintf(area,sizeof(area),"Площадь: %g кв. м",cells*0.25); label(sidebar_,area,MUTED);
         auto *rename = actionButton(sidebar_, "Название", Rename); lv_obj_set_width(rename, LV_PCT(100));
         for (int axis = 0; axis < 2; ++axis) {
             auto *row = lv_obj_create(sidebar_); surface(row); lv_obj_set_size(row, LV_PCT(100), 44);
@@ -277,6 +308,27 @@ void FloorPlanEditor::refreshSidebar()
 void FloorPlanEditor::perform(int action, const std::string &arg)
 {
     if (action >= 0 && action < 6) { setTool(static_cast<Tool>(action)); return; }
+    if(action>=NudgeLeft && action<=NudgeDown) {
+        const int dx=action==NudgeLeft?-1:action==NudgeRight?1:0;
+        const int dy=action==NudgeUp?-1:action==NudgeDown?1:0;
+        bool ok=false;
+        if(const auto *p=plan_.placement(selected_device_)) {
+            if(!deviceAvailable(p->device_id)) return;
+            const auto *r=plan_.room(p->room_id); auto moved=*p;
+            const double x=r->rect.x+r->rect.w*p->u/1000.0+dx,y=r->rect.y+r->rect.h*p->v/1000.0+dy;
+            if(roomContains(*r,x,y)) {
+                moved.u=int(std::lround((x-r->rect.x)*1000/r->rect.w));
+                moved.v=int(std::lround((y-r->rect.y)*1000/r->rect.h));ok=plan_.placeDevice(moved);
+            }
+        } else if(selected_opening_) {
+            const auto id=plan_.moveOpening(selected_opening_,dx?dx:dy);ok=id!=0;if(ok) selected_opening_=id;
+        } else if(const auto *r=plan_.room(selected_room_)) {
+            auto rect=r->rect;rect.x+=dx;rect.y+=dy;ok=plan_.changeRoom(r->id,rect);
+        }
+        if(ok) changed("Объект сдвинут на 0.5 м",false);
+        else message("Дальше сдвинуть нельзя: граница или другой объект",true);
+        return;
+    }
     if (action == Close) { hide(); return; }
     if (action == OpenHouse) { showHouse(lv_obj_get_parent(root_)); return; }
     if (action == Save) {
@@ -291,6 +343,11 @@ void FloorPlanEditor::perform(int action, const std::string &arg)
     if (action == ZoomOut || action == ZoomIn) { zoom(action == ZoomIn ? 4 : -4); return; }
     if (action == Fit) { fit(); return; }
     if (action == Rename) { openNameEditor(); return; }
+    if (action == ExtendArea || action == CutArea) {
+        if(!plan_.room(selected_room_)) { message("Сначала выберите комнату",true); return; }
+        setTool(action==ExtendArea?Tool::Extend:Tool::Cut); return;
+    }
+
     if (action == Delete) {
         bool ok = false;
         if (!selected_device_.empty()) ok = plan_.removeDevice(selected_device_);
@@ -377,7 +434,7 @@ const PlanRoom *FloorPlanEditor::roomAt(double x, double y) const
 {
     const auto &rooms = plan_.document().rooms;
     for (auto it = rooms.rbegin(); it != rooms.rend(); ++it)
-        if (x >= it->rect.x && y >= it->rect.y && x <= it->rect.x + it->rect.w && y <= it->rect.y + it->rect.h) return &*it;
+        if (roomContains(*it,x,y)) return &*it;
     return nullptr;
 }
 PlanRect FloorPlanEditor::displayRect(const PlanRoom &room) const
@@ -385,18 +442,27 @@ PlanRect FloorPlanEditor::displayRect(const PlanRoom &room) const
     if ((gesture_ == Gesture::MoveRoom || gesture_ == Gesture::ResizeRoom) && room.id == selected_room_) return draft_rect_;
     return room.rect;
 }
+PlanRoom FloorPlanEditor::displayRoom(const PlanRoom &room) const {
+    const auto rect=displayRect(room);
+    if(rect.w<3 || rect.h<3) return room;
+    auto displayed=transformRoom(room,rect);
+    for(const auto &part:displayed.parts) if(part.w<=0 || part.h<=0) return room;
+    return displayed;
+}
 lv_point_t FloorPlanEditor::devicePoint(const PlanPlacement &device) const
 {
     const auto *room = plan_.room(device.room_id); if (!room) return {-1000, -1000};
-    const auto r = displayRect(*room);
-    return gridPoint(r.x + r.w * device.u / 1000.0, r.y + r.h * device.v / 1000.0);
+    const auto r = displayRoom(*room);
+    const auto point=roomInterior(r,{r.rect.x+r.rect.w*device.u/1000.0,r.rect.y+r.rect.h*device.v/1000.0});
+    return gridPoint(point.x,point.y);
 }
 PlanPlacement FloorPlanEditor::placementAt(const Device &device, const PlanRoom &room, double x, double y) const
 {
     PlanPlacement p;
     p.device_id = key(device); p.name = device.name; p.type = device.type; p.room_id = room.id; p.level = pending_level_;
-    p.u = std::clamp(static_cast<int>(std::lround((x - room.rect.x) * 1000 / room.rect.w)), 100, 900);
-    p.v = std::clamp(static_cast<int>(std::lround((y - room.rect.y) * 1000 / room.rect.h)), 100, 900);
+    const auto point=roomInterior(room,{x,y});
+    p.u = std::clamp(static_cast<int>(std::lround((point.x - room.rect.x) * 1000 / room.rect.w)), 0, 1000);
+    p.v = std::clamp(static_cast<int>(std::lround((point.y - room.rect.y) * 1000 / room.rect.h)), 0, 1000);
     return p;
 }
 void FloorPlanEditor::zoom(int delta)
@@ -436,6 +502,13 @@ void FloorPlanEditor::pointerDown(int x, int y)
     if (tool_ == Tool::Pan) {
         gesture_ = Gesture::Pan; original_pan_x_ = pan_x_; original_pan_y_ = pan_y_; return;
     }
+    if(tool_==Tool::Extend || tool_==Tool::Cut) {
+        if(!plan_.room(selected_room_)) { message("Сначала выберите комнату",true); return; }
+        gesture_=Gesture::EditRoom;
+        draft_rect_={int(std::lround(start_gx_)),int(std::lround(start_gy_)),1,1};
+        draft_valid_=plan_.canEditRoom(selected_room_,draft_rect_,tool_==Tool::Cut);
+        lv_obj_invalidate(canvas_); return;
+    }
     if (tool_ == Tool::Room) {
         clearSelection();
         if (start_gx_ < 0 || start_gx_ > FloorPlan::WIDTH || start_gy_ < 0 || start_gy_ > FloorPlan::HEIGHT) {
@@ -460,13 +533,20 @@ void FloorPlanEditor::pointerDown(int x, int y)
     if (tool_ == Tool::Door || tool_ == Tool::Window) {
         const auto *room = roomAt(start_gx_, start_gy_);
         if (!room) { message("Коснитесь стены внутри комнаты", true); return; }
-        const double distances[] = {std::abs(start_gy_ - room->rect.y), std::abs(start_gx_ - room->rect.x - room->rect.w),
-                                    std::abs(start_gy_ - room->rect.y - room->rect.h), std::abs(start_gx_ - room->rect.x)};
-        const auto edge = static_cast<int>(std::min_element(distances, distances + 4) - distances);
-        if (distances[edge] > 1.25) { message("Подвиньте касание ближе к стене", true); return; }
-        const int offset = std::clamp(static_cast<int>(std::lround((edge % 2 ?
-            (start_gy_ - room->rect.y) / room->rect.h : (start_gx_ - room->rect.x) / room->rect.w) * 1000)), 50, 950);
-        const auto id = plan_.addOpening(room->id, static_cast<PlanEdge>(edge), offset, tool_ == Tool::Window);
+        PlanWall nearest{}; double best=1000;
+        for(const auto &wall:roomWalls(*room)) {
+            const double px=std::clamp(start_gx_,double(wall.x1),double(wall.x2));
+            const double py=std::clamp(start_gy_,double(wall.y1),double(wall.y2));
+            const double distance=std::hypot(px-start_gx_,py-start_gy_);
+            if(distance<best) {best=distance;nearest=wall;}
+        }
+        if(best>1.25) {message("Подвиньте касание ближе к стене",true);return;}
+        const auto edge=nearest.edge;
+        const bool horizontal=nearest.y1==nearest.y2;
+        const int offset=std::clamp(int(std::lround((horizontal?(start_gx_-room->rect.x)/room->rect.w:(start_gy_-room->rect.y)/room->rect.h)*1000)),50,950);
+        const int inset=edge==PlanEdge::Top?nearest.y1-room->rect.y:edge==PlanEdge::Bottom?room->rect.y+room->rect.h-nearest.y1:
+                        edge==PlanEdge::Left?nearest.x1-room->rect.x:room->rect.x+room->rect.w-nearest.x1;
+        const auto id=plan_.addOpening(room->id,edge,offset,tool_==Tool::Window,inset);
         if (!id) { message("Проём уже есть рядом или достигнут лимит", true); return; }
         clearSelection(); selected_opening_ = id;
         changed(tool_ == Tool::Window ? "Окно добавлено" : "Дверь добавлена"); return;
@@ -491,12 +571,9 @@ void FloorPlanEditor::pointerDown(int x, int y)
     }
     for (const auto &o : plan_.document().openings) {
         const auto *r = plan_.room(o.room_id); if (!r) continue;
-        const bool horizontal = o.edge == PlanEdge::Top || o.edge == PlanEdge::Bottom;
-        const auto pos = gridPoint(horizontal ? r->rect.x + r->rect.w * o.offset / 1000.0 :
-                                       r->rect.x + (o.edge == PlanEdge::Right ? r->rect.w : 0),
-                                   horizontal ? r->rect.y + (o.edge == PlanEdge::Bottom ? r->rect.h : 0) :
-                                       r->rect.y + r->rect.h * o.offset / 1000.0);
-        if (std::abs(pos.x - x) <= 16 && std::abs(pos.y - y) <= 16) {
+        const auto segment=openingSegment(*r,o);const auto a=gridPoint(segment.from.x,segment.from.y),b=gridPoint(segment.to.x,segment.to.y);
+        const int px=std::clamp<int>(x,std::min(a.x,b.x),std::max(a.x,b.x)),py=std::clamp<int>(y,std::min(a.y,b.y),std::max(a.y,b.y));
+        if (std::hypot(px-x,py-y)<=16) {
             selected_opening_ = o.id; refreshSidebar(); lv_obj_invalidate(canvas_); return;
         }
     }
@@ -508,32 +585,42 @@ void FloorPlanEditor::pointerDown(int x, int y)
 
 void FloorPlanEditor::pointerMove(int x, int y)
 {
+    const auto previous=draft_rect_; const auto previous_device=draft_device_;
+    const bool previous_valid=draft_valid_; const int previous_x=pan_x_,previous_y=pan_y_;
     const double gx = (x - pan_x_) / static_cast<double>(scale_);
     const double gy = (y - pan_y_) / static_cast<double>(scale_);
     if (gesture_ == Gesture::Pan) {
         pan_x_ = std::clamp<int>(original_pan_x_ + x - down_x_, -FloorPlan::WIDTH * scale_ + 80, lv_obj_get_width(canvas_) - 80);
         pan_y_ = std::clamp<int>(original_pan_y_ + y - down_y_, -FloorPlan::HEIGHT * scale_ + 80, lv_obj_get_height(canvas_) - 80);
-    } else if (gesture_ == Gesture::NewRoom) {
+    } else if (gesture_ == Gesture::NewRoom || gesture_ == Gesture::EditRoom) {
         if (std::abs(x - down_x_) + std::abs(y - down_y_) <= 4) return;
         const int x0 = static_cast<int>(std::lround(start_gx_)), y0 = static_cast<int>(std::lround(start_gy_));
         const int x1 = static_cast<int>(std::lround(gx)), y1 = static_cast<int>(std::lround(gy));
         draft_rect_ = {std::min(x0, x1), std::min(y0, y1), std::abs(x1 - x0), std::abs(y1 - y0)};
-        draft_valid_ = plan_.canPlace(draft_rect_);
+        if(gesture_==Gesture::EditRoom) { draft_rect_.w=std::max(1,draft_rect_.w); draft_rect_.h=std::max(1,draft_rect_.h); }
+        if(draft_rect_==previous) return;
+        draft_valid_ = gesture_==Gesture::EditRoom ? plan_.canEditRoom(selected_room_,draft_rect_,tool_==Tool::Cut) : plan_.canPlace(draft_rect_);
     } else if (gesture_ == Gesture::MoveRoom || gesture_ == Gesture::ResizeRoom) {
         const int dx = static_cast<int>(std::lround(gx - start_gx_)), dy = static_cast<int>(std::lround(gy - start_gy_));
         draft_rect_ = original_rect_;
         if (gesture_ == Gesture::MoveRoom) { draft_rect_.x += dx; draft_rect_.y += dy; }
         else { draft_rect_.w += dx; draft_rect_.h += dy; }
-        draft_valid_ = plan_.canPlace(draft_rect_, selected_room_);
+        if(draft_rect_==previous) return;
+        const auto *room=plan_.room(selected_room_);
+        draft_valid_ = room && plan_.canPlaceRoom(transformRoom(*room,draft_rect_), selected_room_);
     } else if (gesture_ == Gesture::MoveDevice) {
         const auto *room = roomAt(gx, gy);
         draft_valid_ = room != nullptr;
         if (room) {
             draft_device_.room_id = room->id;
-            draft_device_.u = std::clamp(static_cast<int>(std::lround((std::round(gx) - room->rect.x) * 1000 / room->rect.w)), 100, 900);
-            draft_device_.v = std::clamp(static_cast<int>(std::lround((std::round(gy) - room->rect.y) * 1000 / room->rect.h)), 100, 900);
+            const auto point=roomInterior(*room,{std::round(gx),std::round(gy)});
+            draft_device_.u = std::clamp(int(std::lround((point.x-room->rect.x)*1000/room->rect.w)),0,1000);
+            draft_device_.v = std::clamp(int(std::lround((point.y-room->rect.y)*1000/room->rect.h)),0,1000);
         }
     }
+    if(gesture_==Gesture::None) return;
+    if(gesture_==Gesture::Pan && previous_x==pan_x_ && previous_y==pan_y_) return;
+    if(gesture_==Gesture::MoveDevice && previous_valid==draft_valid_ && previous_device.room_id==draft_device_.room_id && previous_device.u==draft_device_.u && previous_device.v==draft_device_.v) return;
     lv_obj_invalidate(canvas_);
 }
 void FloorPlanEditor::pointerUp(int x, int y)
@@ -546,10 +633,14 @@ void FloorPlanEditor::pointerUp(int x, int y)
     if (gesture == Gesture::Pan) { lv_obj_invalidate(canvas_); return; }
     if (!draft_valid_) {
         refreshSidebar(); lv_obj_invalidate(canvas_);
+        if(gesture==Gesture::EditRoom) {message("Участок должен примыкать к комнате. Нельзя разделить её или пересечь другую комнату.",true); return;}
         message(gesture == Gesture::MoveDevice ? "Переместите устройство внутрь комнаты" :
             "Комнаты не должны пересекаться. Минимальный размер - 1.5 x 1.5 м.", true); return;
     }
-    if (gesture == Gesture::NewRoom) {
+    if(gesture==Gesture::EditRoom) {
+        if(!plan_.editRoom(selected_room_,draft_rect_,tool_==Tool::Cut)) {message("Не удалось изменить контур комнаты",true);return;}
+        setTool(Tool::Select); changed("Форма комнаты изменена. Доступна отмена.");
+    } else if (gesture == Gesture::NewRoom) {
         const auto id = plan_.addRoom(draft_rect_);
         if (!id) { message("Не удалось добавить комнату: нет места или достигнут лимит", true); lv_obj_invalidate(canvas_); return; }
         selected_room_ = id; setTool(Tool::Select); changed("Комната добавлена. Название и размеры - справа.");
@@ -614,37 +705,39 @@ void FloorPlanEditor::draw(lv_layer_t *layer)
     }
     const uint32_t colors[] = {0xF0ECFB, 0xE8F5F1, 0xFFF4DF, 0xE9F1FC, 0xFBEDEF};
     for (const auto &room : plan_.document().rooms) {
-        const auto r = displayRect(room); const auto pos = gridPoint(r.x, r.y);
-        const bool selected = room.id == selected_room_;
-        const bool invalid = selected && !draft_valid_ && gesture_ != Gesture::None;
-        rect(pos.x, pos.y, r.w * scale_, r.h * scale_, invalid ? 0xFCE6E9 : colors[(room.id - 1) % 5],
-             invalid ? 0xC74359 : selected ? PURPLE : 0xA9B1C1, selected ? 3 : 2);
-        text(pos.x + 8, pos.y + 6, r.w * scale_ - 16, room.name);
-        if (r.h * scale_ > 72) {
-            char size[48]; snprintf(size, sizeof(size), "%g x %g м", r.w * 0.5, r.h * 0.5);
-            text(pos.x + 8, pos.y + r.h * scale_ - 30, r.w * scale_ - 16, size, MUTED);
+        const auto displayed=displayRoom(room); const auto r=displayed.rect; const auto pos=gridPoint(r.x,r.y);
+        const bool selected=room.id==selected_room_;
+        const bool invalid=selected && !draft_valid_ && gesture_!=Gesture::None;
+        const auto parts=roomParts(displayed);
+        for(const auto &p:parts) {const auto at=gridPoint(p.x,p.y);rect(at.x,at.y,p.w*scale_,p.h*scale_,invalid?0xFCE6E9:colors[(room.id-1)%5],0,0);}
+        const auto cached=std::find_if(wall_cache_.begin(),wall_cache_.end(),[&](const auto &item){return item.first==room.id;});
+        if(cached!=wall_cache_.end()) for(const auto &wall:cached->second) {
+            auto transform=[&](int x,int y) {return gridPoint(r.x+std::lround(double(x-room.rect.x)*r.w/room.rect.w),r.y+std::lround(double(y-room.rect.y)*r.h/room.rect.h));};
+            const auto a=transform(wall.x1,wall.y1),b=transform(wall.x2,wall.y2);
+            line(a.x,a.y,b.x,b.y,invalid?0xC74359:selected?PURPLE:0xA9B1C1,selected?3:2);
         }
-        if (selected) rect(pos.x + r.w * scale_ - 8, pos.y + r.h * scale_ - 8, 16, 16, PURPLE, 0xFFFFFF, 2, 4);
+        const auto largest=std::max_element(parts.begin(),parts.end(),[](const PlanRect &a,const PlanRect &b){return a.w*a.h<b.w*b.h;});
+        if(largest!=parts.end()) {const auto at=gridPoint(largest->x,largest->y);text(at.x+8,at.y+6,largest->w*scale_-16,room.name);}
+        if(selected) rect(pos.x+r.w*scale_-8,pos.y+r.h*scale_-8,16,16,PURPLE,0xFFFFFF,2,4);
     }
-    if (gesture_ == Gesture::NewRoom) {
+    if (gesture_ == Gesture::NewRoom || gesture_ == Gesture::EditRoom) {
         const auto pos = gridPoint(draft_rect_.x, draft_rect_.y);
-        rect(pos.x, pos.y, draft_rect_.w * scale_, draft_rect_.h * scale_, draft_valid_ ? 0xF0ECFB : 0xFCE6E9,
+        const bool cut=gesture_==Gesture::EditRoom && tool_==Tool::Cut;
+        rect(pos.x, pos.y, draft_rect_.w * scale_, draft_rect_.h * scale_, cut?0xFCE6E9:draft_valid_?0xF0ECFB:0xFCE6E9,
              draft_valid_ ? PURPLE : 0xC74359, 3);
     }
     for (const auto &o : plan_.document().openings) {
         const auto *room = plan_.room(o.room_id); if (!room) continue;
-        const auto r = displayRect(*room);
-        const bool horizontal = o.edge == PlanEdge::Top || o.edge == PlanEdge::Bottom;
-        const auto pos = gridPoint(horizontal ? r.x + r.w * o.offset / 1000.0 : r.x + (o.edge == PlanEdge::Right ? r.w : 0),
-                                   horizontal ? r.y + (o.edge == PlanEdge::Bottom ? r.h : 0) : r.y + r.h * o.offset / 1000.0);
+        const auto displayed=displayRoom(*room); const auto r=displayed.rect;
+        const bool horizontal=o.edge==PlanEdge::Top || o.edge==PlanEdge::Bottom;
+        auto opening=o; opening.inset=int(std::lround(double(o.inset)*(horizontal?r.h:r.w)/(horizontal?room->rect.h:room->rect.w)));
+        const auto point=openingPosition(displayed,opening); const auto pos=gridPoint(point.x,point.y);
         const uint32_t color = selected_opening_ == o.id ? PURPLE : o.window ? 0x4099C8 : 0xB78B55;
-        const int half = std::min(scale_, (horizontal ? r.w : r.h) * scale_ / 5);
-        line(pos.x - (horizontal ? half : 0), pos.y - (horizontal ? 0 : half),
-             pos.x + (horizontal ? half : 0), pos.y + (horizontal ? 0 : half), 0xFFFFFF, 8);
-        line(pos.x - (horizontal ? half : 0), pos.y - (horizontal ? 0 : half),
-             pos.x + (horizontal ? half : 0), pos.y + (horizontal ? 0 : half), color, o.window ? 4 : 3);
-        if (!o.window) line(pos.x - (horizontal ? half : 0), pos.y - (horizontal ? 0 : half),
-                           pos.x, pos.y + (horizontal ? half : 0), color, 2);
+        const auto segment=openingSegment(displayed,opening);
+        const auto a=gridPoint(segment.from.x,segment.from.y),b=gridPoint(segment.to.x,segment.to.y);
+        line(a.x,a.y,b.x,b.y,0xFFFFFF,8);
+        line(a.x,a.y,b.x,b.y,color,o.window?4:3);
+        if(!o.window) line(a.x,a.y,pos.x,pos.y+(horizontal?scale_:0),color,2);
     }
     for (const auto &saved : plan_.document().devices) {
         const auto &p = gesture_ == Gesture::MoveDevice && saved.device_id == selected_device_ ? draft_device_ : saved;

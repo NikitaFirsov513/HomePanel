@@ -6,7 +6,7 @@
 
 class FloorPlanEditor {
 public:
-    enum class Tool { Select, Room, Device, Door, Window, Pan };
+    enum class Tool { Select, Room, Device, Door, Window, Pan, Extend, Cut };
     FloorPlanEditor() = default;
     ~FloorPlanEditor();
     FloorPlanEditor(const FloorPlanEditor &) = delete;
@@ -38,7 +38,7 @@ private:
     lv_obj_t *name_popup_ = nullptr, *name_input_ = nullptr;
     std::vector<lv_obj_t *> tool_buttons_;
     Tool tool_ = Tool::Select;
-    enum class Gesture { None, NewRoom, MoveRoom, ResizeRoom, MoveDevice, Pan };
+    enum class Gesture { None, NewRoom, MoveRoom, ResizeRoom, MoveDevice, Pan, EditRoom };
     Gesture gesture_ = Gesture::None;
     uint32_t selected_room_ = 0, selected_opening_ = 0;
     std::string selected_device_, pending_device_;
@@ -56,7 +56,9 @@ private:
     lv_obj_t *actionButton(lv_obj_t *parent, const char *text, int action, const std::string &arg = "");
     void create(lv_obj_t *parent);
     void refreshSidebar();
-    void changed(const char *message);
+    void changed(const char *message, bool refresh = true);
+    std::vector<std::pair<uint32_t, std::vector<PlanWall>>> wall_cache_;
+    void cacheWalls();
     void message(const char *text, bool error = false);
     void perform(int action, const std::string &arg);
     void openNameEditor();
@@ -64,6 +66,7 @@ private:
     void fit();
     void clearSelection();
     const PlanRoom *roomAt(double x, double y) const;
+    PlanRoom displayRoom(const PlanRoom &room) const;
     PlanRect displayRect(const PlanRoom &room) const;
     lv_point_t devicePoint(const PlanPlacement &device) const;
     PlanPlacement placementAt(const Device &device, const PlanRoom &room, double x, double y) const;
