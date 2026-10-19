@@ -105,7 +105,7 @@ void YandexAuth::restart(uint64_t now) {
 void YandexAuth::tick(uint64_t now, bool online) {
     if (state_ != AuthState::Waiting) return;
     if (now >= code_expires_) { fail("Код устарел. Запросите новый код входа."); return; }
-    if (!online) { message_ = "Нет сети. Подключите Ethernet, пока код не истёк."; return; }
+    if (!online) { message_ = "Нет сети. Проверьте подключение, пока код не истёк."; return; }
     if (now < next_poll_) return;
     next_poll_ = now + interval_;
     const auto reply = transport_("/token", credentials() + "&grant_type=device_code&code=" + encode(device_code_));

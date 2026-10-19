@@ -77,6 +77,9 @@ void UiManager::ui_process_message(const UiMessage &msg)
     }
     ESP_ERROR_CHECK(bsp_display_lock(-1));
     switch (msg.type) {
+    case UiMessageType::NETWORK_STATE:
+        home_page_.updateNetwork(msg.network);
+        break;
     case UiMessageType::AUTH_STATE:
         home_page_.updateAuth(msg.auth);
         if (snapshot_available) home_page_.update(devices);
@@ -158,6 +161,12 @@ esp_err_t UiManager::setAuthState(const AuthSnapshot &snapshot, DeviceManager *d
 bool UiManager::ui_send(const UiMessage &msg)
 {
     return ui_queue_ && xQueueSend(ui_queue_, &msg, pdMS_TO_TICKS(100)) == pdTRUE;
+}
+
+esp_err_t UiManager::setNetworkState(const NetworkSnapshot &snapshot)
+{
+    UiMessage msg{}; msg.type = UiMessageType::NETWORK_STATE; msg.network = snapshot;
+    return ui_send(msg) ? ESP_OK : ESP_FAIL;
 }
 
 esp_err_t UiManager::setConnectionState(const ConnectionSnapshot &snapshot, DeviceManager *devices)

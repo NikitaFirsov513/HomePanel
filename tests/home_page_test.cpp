@@ -16,6 +16,9 @@ static bool authCommand(AuthAction action) { ++auth_calls; auth_action = action;
 static int connection_calls = 0;
 static ConnectionCommand last_connection;
 static bool connectionCommand(const ConnectionCommand &command) { ++connection_calls; last_connection = command; return true; }
+static WifiCommand last_wifi;
+static int wifi_calls = 0;
+static bool wifiCommand(const WifiCommand &command) { ++wifi_calls; last_wifi = command; return true; }
 static bool send(const DeviceAction &action) { if (!accept) return false; ++calls; last = action; return true; }
 static lv_obj_t *find(lv_obj_t *root, const lv_obj_class_t *type)
 {
@@ -553,6 +556,106 @@ int main()
         house.update(plan.document(), {ha});
         CHECK(house.devicePoint(ha.id).x > 0 && house.devicePoint("yandex:" + ya.id).x < 0);
         house.hide();
+    }
+    {
+        HomePage page; page.setWifiHandler(wifiCommand); page.update({}); lv_screen_load(page.root());
+        NetworkSnapshot net; net.active = NetworkPath::Ethernet; net.ethernet_ready = net.wifi_ready = net.wifi_configured = true;
+        std::snprintf(net.ethernet_ip, sizeof(net.ethernet_ip), "192.168.31.148");
+        std::snprintf(net.wifi_ip, sizeof(net.wifi_ip), "192.168.31.149");
+        std::snprintf(net.ssid, sizeof(net.ssid), "Home_24");
+        std::snprintf(net.saved_password, sizeof(net.saved_password), "demo-password");
+        std::snprintf(net.message, sizeof(net.message), "Wi-Fi подключён. Провод имеет приоритет.");
+        page.updateNetwork(net);
+        auto *badge = textButton(page.root(), "Провод"); CHECK(badge);
+        lv_obj_send_event(badge, LV_EVENT_CLICKED, nullptr);
+        auto *network_root = textButton(page.root(), "Подключение к сети"); CHECK(network_root && page.view() == HomePage::View::Network);
+        auto *wired = textButton(network_root, "Провод\n192.168.31.148"); CHECK(wired);
+        auto *wireless = textButton(network_root, "Wi-Fi\n192.168.31.149"); CHECK(wireless);
+        CHECK((lv_color_to_u32(lv_obj_get_style_bg_color(wired, LV_PART_MAIN)) & 0xFFFFFF) == 0xE5F4EC);
+        CHECK((lv_color_to_u32(lv_obj_get_style_bg_color(wireless, LV_PART_MAIN)) & 0xFFFFFF) == 0xFFFFFF);
+        checkGlyphs(network_root); snapshot(display, "network-ethernet.ppm");
+        net.active = NetworkPath::Wifi; net.ethernet_ready = false; net.ethernet_ip[0] = 0;
+        page.updateNetwork(net); CHECK(page.view() == HomePage::View::Network);
+        CHECK((lv_color_to_u32(lv_obj_get_style_bg_color(wireless, LV_PART_MAIN)) & 0xFFFFFF) == 0xE5F4EC);
+        snapshot(display, "network-wifi.ppm");
+        auto *preview_password = find(network_root, &lv_textarea_class);
+        for (uint32_t i = 0; i < lv_obj_get_child_count(network_root); ++i) {
+            auto *o = lv_obj_get_child(network_root, i);
+            if (lv_obj_check_type(o, &lv_textarea_class) && lv_textarea_get_password_mode(o)) preview_password = o;
+        }
+        CHECK(preview_password && lv_textarea_get_password_mode(preview_password));
+        CHECK(textButton(network_root, "Пароль сохранён"));
+        auto *reveal = textButton(network_root, "Показать"); CHECK(reveal);
+        lv_obj_send_event(reveal, LV_EVENT_CLICKED, nullptr);
+        CHECK(!lv_textarea_get_password_mode(preview_password));
+        CHECK(!std::strcmp(lv_textarea_get_text(preview_password), "demo-password"));
+        snapshot(display, "network-password-preview.ppm");
+        lv_obj_send_event(reveal, LV_EVENT_CLICKED, nullptr); CHECK(lv_textarea_get_password_mode(preview_password));
+        auto *edit = textButton(network_root, "Изменить"); CHECK(edit); lv_obj_send_event(edit, LV_EVENT_CLICKED, nullptr);
+        auto *keyboard = find(network_root, &lv_keyboard_class); CHECK(keyboard && lv_obj_is_visible(keyboard));
+        lv_obj_update_layout(network_root); lv_area_t area; lv_obj_get_coords(keyboard, &area);
+        CHECK(area.y1 >= 64 && area.y2 < 600);
+        auto *ssid = find(network_root, &lv_textarea_class); CHECK(ssid);
+        lv_obj_t *password = nullptr;
+        for (uint32_t i = 0; i < lv_obj_get_child_count(network_root); ++i) {
+            auto *obj = lv_obj_get_child(network_root, i);
+            if (obj != ssid && lv_obj_check_type(obj, &lv_textarea_class)) password = obj;
+        }
+        CHECK(password && lv_textarea_get_password_mode(password));
+        lv_textarea_set_text(ssid, "New_24"); CHECK(!lv_textarea_get_text(password)[0]);
+        CHECK(textButton(network_root, "Пароль для этой сети не сохранён"));
+        lv_textarea_set_text(password, "test-password");
+        lv_obj_send_event(reveal, LV_EVENT_CLICKED, nullptr); CHECK(!lv_textarea_get_password_mode(password));
+        lv_obj_send_event(reveal, LV_EVENT_CLICKED, nullptr); CHECK(lv_textarea_get_password_mode(password));
+        lv_obj_send_event(password, LV_EVENT_FOCUSED, nullptr); CHECK(lv_keyboard_get_textarea(keyboard) == password);
+        snapshot(display, "network-settings.ppm");
+        auto *save = textButton(network_root, "Подключить Wi-Fi"); CHECK(save);
+        lv_obj_send_event(save, LV_EVENT_CLICKED, nullptr);
+        CHECK(wifi_calls == 1 && last_wifi.action == WifiAction::Save && !std::strcmp(last_wifi.ssid, "New_24"));
+        CHECK(!std::strcmp(last_wifi.password, "test-password") && !lv_textarea_get_text(password)[0]);
+        page.updateNetwork(net);
+        auto *forget = textButton(network_root, "Забыть Wi-Fi"); CHECK(forget); lv_obj_send_event(forget, LV_EVENT_CLICKED, nullptr);
+        CHECK(wifi_calls == 2 && last_wifi.action == WifiAction::Disconnect);
+        net = {}; page.updateNetwork(net);
+        auto *done = textButton(network_root, "Готово"); CHECK(done); lv_obj_send_event(done, LV_EVENT_CLICKED, nullptr);
+        CHECK(!lv_obj_is_visible(keyboard));
+        CHECK(textButton(network_root, "Нет подключения\nОжидание сети"));
+        snapshot(display, "network-offline.ppm");
+        auto *search = textButton(network_root, "Найти сети"); CHECK(search);
+        lv_obj_send_event(search, LV_EVENT_CLICKED, nullptr);
+        CHECK(wifi_calls == 3 && last_wifi.action == WifiAction::Scan && !lv_obj_is_visible(keyboard));
+        auto *popup = textButton(network_root, "Доступные сети Wi-Fi"); CHECK(popup && lv_obj_is_visible(popup));
+        auto *refresh = textButton(popup, "Обновить"); CHECK(lv_obj_has_state(refresh, LV_STATE_DISABLED));
+        page.updateNetwork(net); CHECK(lv_obj_has_state(refresh, LV_STATE_DISABLED));
+        net.scan.state = WifiScanState::Scanning; net.scan.generation = 1; net.busy = true; page.updateNetwork(net);
+        net.scan.state = WifiScanState::Ready; net.scan.generation = 2; net.busy = false; net.scan.count = 3;
+        std::snprintf(net.scan.message, sizeof(net.scan.message), "Выберите сеть");
+        const char *names[] = {"Home_24", "Guest", "Enterprise"};
+        for (int i = 0; i < 3; ++i) { auto &n = net.scan.networks[i]; std::snprintf(n.ssid, sizeof(n.ssid), "%s", names[i]); n.rssi = -35 - i * 15; n.channel = 6; }
+        net.scan.networks[0].security = WifiSecurity::Password; net.scan.networks[1].security = WifiSecurity::Open;
+        page.updateNetwork(net); CHECK(!lv_obj_has_state(refresh, LV_STATE_DISABLED));
+        auto *secured = textButton(popup, "Home_24"); auto *enterprise = textButton(popup, "Enterprise"); CHECK(secured && enterprise);
+        CHECK(lv_obj_has_state(enterprise, LV_STATE_DISABLED));
+        checkGlyphs(popup); snapshot(display, "wifi-scan.ppm");
+        lv_obj_send_event(secured, LV_EVENT_CLICKED, nullptr);
+        CHECK(!lv_obj_is_visible(popup) && lv_obj_is_visible(keyboard));
+        CHECK(!std::strcmp(lv_textarea_get_text(ssid), "Home_24") && !lv_textarea_get_text(password)[0]);
+        CHECK(lv_keyboard_get_textarea(keyboard) == password);
+        lv_obj_send_event(search, LV_EVENT_CLICKED, nullptr); CHECK(wifi_calls == 4);
+        net.scan.generation = 3; page.updateNetwork(net);
+        auto *guest = textButton(popup, "Guest"); CHECK(guest); lv_obj_send_event(guest, LV_EVENT_CLICKED, nullptr);
+        CHECK(!std::strcmp(lv_textarea_get_text(ssid), "Guest"));
+        auto *open = find(network_root, &lv_checkbox_class); CHECK(open);
+        CHECK(lv_obj_has_state(open, LV_STATE_CHECKED));
+        lv_obj_send_event(save, LV_EVENT_CLICKED, nullptr); CHECK(last_wifi.open_network && !std::strcmp(last_wifi.ssid, "Guest"));
+        lv_obj_send_event(search, LV_EVENT_CLICKED, nullptr);
+        net.scan.state = WifiScanState::Error; net.scan.count = 0; ++net.scan.generation;
+        std::snprintf(net.scan.message, sizeof(net.scan.message), "Нет ответа Wi-Fi модуля"); page.updateNetwork(net);
+        CHECK(textButton(popup, "Нет ответа Wi-Fi модуля") && !textButton(popup, "Home_24"));
+        page.navigate(HomePage::View::House); CHECK(!lv_obj_is_visible(network_root));
+        CHECK(lv_textarea_get_password_mode(password));
+        lv_obj_update_layout(page.root()); lv_obj_get_coords(badge, &area);
+        CHECK(area.x1 >= 0 && area.x2 < 1024 && area.y2 < 64);
     }
     lv_display_delete(display);
     lv_deinit();

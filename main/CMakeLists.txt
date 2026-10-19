@@ -7,6 +7,10 @@ endif()
 idf_component_register(
     SRCS
     "src/main.cpp"
+    "src/Network.cpp"
+    "src/NetworkManager.cpp"
+    "src/NetworkStorage.cpp"
+    "src/NetworkView.cpp"
     "src/ethernet_init.c"
     "src/HttpsClient.cpp"
     "src/YandexAuth.cpp"
@@ -46,6 +50,9 @@ idf_component_register(
     esp_event
     esp_eth
     esp_netif
+    esp_wifi
+    esp_wifi_remote
+    esp_hosted
     nvs_flash
     esp_timer
     esp_hw_support

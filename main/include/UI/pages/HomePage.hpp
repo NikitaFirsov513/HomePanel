@@ -6,11 +6,12 @@
 #include "FloorPlanEditor.hpp"
 #include "AccountView.hpp"
 #include "ConnectionsView.hpp"
+#include "NetworkView.hpp"
 #include <array>
 class HomePage : public Page
 {
 public:
-    enum class View { House, Devices, Plan, Connections, Account };
+    enum class View { House, Devices, Plan, Connections, Account, Network };
     void navigate(View view);
     View view() const { return view_; }
     void create() override;
@@ -25,6 +26,8 @@ public:
     void updateAuth(const AuthSnapshot &snapshot);
     void setConnectionHandler(ConnectionsView::Handler handler) { connections_.setHandler(handler); }
     void updateConnection(const ConnectionSnapshot &snapshot);
+    void setWifiHandler(NetworkView::Handler handler) { network_.setHandler(handler); }
+    void updateNetwork(const NetworkSnapshot &snapshot);
 
 private:
     View view_ = View::House;
@@ -37,6 +40,7 @@ private:
     bool auth_seen_ = false;
     AuthState auth_state_ = AuthState::SignedOut;
     lv_obj_t *navigation_ = nullptr, *auth_badge_ = nullptr, *auth_badge_text_ = nullptr;
+    lv_obj_t *network_badge_ = nullptr, *network_badge_text_ = nullptr;
     std::array<lv_obj_t *, 4> nav_buttons_{};
     lv_obj_t *list_ = nullptr;
     lv_obj_t *status_ = nullptr;
@@ -64,4 +68,5 @@ private:
     FloorPlanEditor editor_;
     AccountView account_;
     ConnectionsView connections_;
+    NetworkView network_;
 };

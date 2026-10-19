@@ -320,10 +320,10 @@ void HomePage::create()
     lv_obj_set_pos(navigation_, -20, -84); lv_obj_set_style_pad_hor(navigation_, 16, 0);
     lv_obj_set_flex_flow(navigation_, LV_FLEX_FLOW_ROW); lv_obj_set_style_pad_column(navigation_, 8, 0);
     lv_obj_set_flex_align(navigation_, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
-    auto *brand = label(navigation_, "Мой дом"); lv_obj_set_width(brand, 110);
+    auto *brand = label(navigation_, "Мой дом"); lv_obj_set_width(brand, 94);
     connections_.setYandexHandler([](void *context) { static_cast<HomePage *>(context)->navigate(View::Account); }, this);
     const char *names[] = {"Дом", "Устройства", "План", "Подключения"};
-    const int widths[] = {100, 140, 100, 172};
+    const int widths[] = {82, 138, 82, 166};
     struct NavBinding { HomePage *page; View view; };
     for (int i = 0; i < 4; ++i) {
         auto *tab = button(navigation_, names[i]); nav_buttons_[i] = tab; lv_obj_set_width(tab, widths[i]);
@@ -338,6 +338,11 @@ void HomePage::create()
     lv_obj_set_style_text_color(auth_badge_, lv_color_hex(0xAE6342), 0);
     lv_obj_set_style_bg_color(auth_badge_, lv_color_hex(0xFFF0DF), 0);
     lv_obj_add_event_cb(auth_badge_, [](lv_event_t *event) { static_cast<HomePage *>(lv_event_get_user_data(event))->navigate(View::Connections); }, LV_EVENT_CLICKED, this);
+    network_badge_ = button(navigation_, "Нет сети"); lv_obj_set_width(network_badge_, 138);
+    network_badge_text_ = lv_obj_get_child(network_badge_, 0);
+    lv_obj_set_style_bg_color(network_badge_, lv_color_hex(0xFFF0DF), 0);
+    lv_obj_set_style_text_color(network_badge_, lv_color_hex(0xAE6342), 0);
+    lv_obj_add_event_cb(network_badge_, [](lv_event_t *event) { static_cast<HomePage *>(lv_event_get_user_data(event))->navigate(View::Network); }, LV_EVENT_CLICKED, this);
     navigate(View::House);
     rebuildDevices({}, true);
 }
@@ -346,18 +351,26 @@ void HomePage::navigate(View view)
 {
     create();
     if (busy_) return;
-    closeDetails(); editor_.hide(); editor_.house().hide(); account_.hide(); connections_.hide();
+    closeDetails(); editor_.hide(); editor_.house().hide(); account_.hide(); connections_.hide(); network_.hide();
     view_ = view;
     if (view == View::House) editor_.showHouse(root_);
     else if (view == View::Plan) editor_.show(root_);
     else if (view == View::Account) account_.show(root_);
     else if (view == View::Connections) connections_.show(root_);
+    else if (view == View::Network) network_.show(root_);
     for (size_t i = 0; i < nav_buttons_.size(); ++i) {
         const bool active = i == static_cast<size_t>(view == View::Account ? View::Connections : view);
         lv_obj_set_style_bg_color(nav_buttons_[i], lv_color_hex(active ? ACCENT : 0xF3F4F7), 0);
         lv_obj_set_style_text_color(nav_buttons_[i], lv_color_hex(active ? 0xFFFFFF : MUTED), 0);
     }
     lv_obj_move_foreground(navigation_);
+}
+
+void HomePage::updateNetwork(const NetworkSnapshot &snapshot) {
+    create(); network_.update(snapshot);
+    lv_label_set_text(network_badge_text_, networkPathName(snapshot.active));
+    lv_obj_set_style_bg_color(network_badge_, lv_color_hex(snapshot.active == NetworkPath::None ? 0xFFF0DF : snapshot.active == NetworkPath::Ethernet ? 0xE5F4EC : 0xE6EFFB), 0);
+    lv_obj_set_style_text_color(network_badge_, lv_color_hex(snapshot.active == NetworkPath::None ? 0xAE6342 : snapshot.active == NetworkPath::Ethernet ? 0x238469 : 0x3474BD), 0);
 }
 
 void HomePage::create(DeviceManager *device_manager)

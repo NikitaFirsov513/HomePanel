@@ -64,10 +64,14 @@ private:
         esp_http_client_event_t *event);
 
 public:
+    using InterfaceResolver = bool (*)(char *name, size_t capacity);
+    static void setInterfaceResolver(InterfaceResolver resolver) { interface_resolver_ = resolver; }
     HttpsClient(const char *baseUrl, size_t response_capacity = HTTPS_RESPONSE_BUFFER_SIZE);
     ~HttpsClient();
     HttpsClient(const HttpsClient &) = delete;
     HttpsClient &operator=(const HttpsClient &) = delete;
 
     HttpsRes_t send(const HttpsReq_t &req);
+private:
+    static InterfaceResolver interface_resolver_;
 };

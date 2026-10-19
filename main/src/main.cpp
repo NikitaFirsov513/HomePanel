@@ -5,7 +5,6 @@
 #include <atomic>
 #include "sdkconfig.h"
 #include "freertos/FreeRTOS.h"
-#include "freertos/event_groups.h"
 #include "freertos/task.h"
 #include "freertos/queue.h"
 #include "esp_event.h"
@@ -13,7 +12,7 @@
 #include "esp_log.h"
 #include "esp_netif.h"
 #include "cJSON.h"
-#include "ethernet_init.h"
+#include "NetworkManager.hpp"
 #include "HttpsClient.hpp"
 #include "UiManager.hpp"
 #include "DeviceManager.hpp"
@@ -23,10 +22,10 @@
 #include "HomeAssistant.hpp"
 #include "esp_mac.h"
 #include "esp_timer.h"
+#include "esp_heap_caps.h"
 
-static constexpr EventBits_t ETH_GOT_IP_BIT = BIT0;
 static const char *TAG = "MAIN";
-static EventGroupHandle_t eth_event_group;
+static NetworkManager network;
 static QueueHandle_t action_queue;
 static QueueHandle_t auth_queue;
 static QueueHandle_t connection_queue;
@@ -37,13 +36,13 @@ static DeviceManager device_manager;
 
 static bool network_ready()
 {
-    return (xEventGroupGetBits(eth_event_group) & ETH_GOT_IP_BIT) != 0;
+    return network.ready();
 }
 
 static bool enqueue_action(const DeviceAction &action)
 {
     // Called by LVGL: no HTTP, waiting, or model mutexes on the display thread.
-    if (!action_queue || !eth_event_group || !network_ready() || !auth_ready.load() ||
+    if (!action_queue || !network_ready() || !auth_ready.load() ||
         xQueueSend(action_queue, &action, 0) != pdTRUE) return false;
     if (auto task = sync_task_handle.load()) xTaskNotifyGive(task);
     return true;
@@ -63,27 +62,38 @@ static bool enqueue_connection(const ConnectionCommand &command)
     return true;
 }
 
-static void eth_event_handler(void *, esp_event_base_t, int32_t event_id, void *)
+static bool enqueue_wifi(const WifiCommand &command)
 {
-    if (event_id == ETHERNET_EVENT_DISCONNECTED || event_id == ETHERNET_EVENT_STOP) {
-        xEventGroupClearBits(eth_event_group, ETH_GOT_IP_BIT);
-        ESP_LOGW(TAG, "Ethernet unavailable");
-    }
+    return network.enqueue(command);
 }
 
-static void ip_event_handler(void *, esp_event_base_t, int32_t event_id, void *)
+static void network_status_task(void *)
 {
-    if (event_id == IP_EVENT_ETH_GOT_IP) {
-        xEventGroupSetBits(eth_event_group, ETH_GOT_IP_BIT);
-        ESP_LOGI(TAG, "Network is ready");
-    } else if (event_id == IP_EVENT_ETH_LOST_IP) {
-        xEventGroupClearBits(eth_event_group, ETH_GOT_IP_BIT);
+    bool published = false; uint32_t generation = 0;
+    int64_t last_heap_report = 0;
+    while (true) {
+        const auto snapshot = network.snapshot();
+        const auto dma_caps = MALLOC_CAP_INTERNAL | MALLOC_CAP_DMA | MALLOC_CAP_8BIT;
+        const auto dma_free = heap_caps_get_free_size(dma_caps);
+        const auto dma_largest = heap_caps_get_largest_free_block(dma_caps);
+        const auto now = esp_timer_get_time();
+        if (snapshot.active == NetworkPath::Wifi && (dma_free < 8192 || dma_largest < 2048) && now - last_heap_report >= 5000000) {
+            ESP_LOGW("NETWORK", "Low DMA heap: free=%u, largest=%u, PSRAM free=%u",
+                     static_cast<unsigned>(dma_free), static_cast<unsigned>(dma_largest),
+                     static_cast<unsigned>(heap_caps_get_free_size(MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT)));
+            last_heap_report = now;
+        }
+
+        if (!published || snapshot.generation != generation) {
+            if (ui_manager.setNetworkState(snapshot) == ESP_OK) { generation = snapshot.generation; published = true; }
+        }
+        vTaskDelay(pdMS_TO_TICKS(500));
     }
 }
 
 static std::string request_error(esp_err_t error, int status, bool control)
 {
-    if (!network_ready()) return "Нет сети. Проверьте Ethernet.";
+    if (!network_ready()) return "Нет сети. Проверьте подключение к сети.";
     if (status == 401) return "HTTP 401: токен Яндекса недействителен";
     if (status == 403) return control ? "HTTP 403: токену нужно разрешение iot:control" :
                                                      "HTTP 403: токену нужно разрешение iot:view";
@@ -146,7 +156,7 @@ static bool send_action(const DeviceAction &action, const std::string &token, st
 
 static OAuthReply oauth_request(const char *path, const std::string &body)
 {
-    if (!network_ready()) return {false, 0, {}, "ETHERNET_NOT_READY"};
+    if (!network_ready()) return {false, 0, {}, "NETWORK_NOT_READY"};
     HttpsClient https("https://oauth.yandex.ru");
     HttpsReq_t req{}; req.path = path; req.method = HTTP_METHOD_POST;
     req.body = body.c_str(); req.content_type = "application/x-www-form-urlencoded";
@@ -229,9 +239,15 @@ static void device_sync_task(void *)
     bool was_online = false;
     uint64_t next_yandex = 0, next_ha = 0;
     AuthSnapshot previous;
+    NetworkSnapshot previous_network;
     while (true) {
         const auto now = static_cast<uint64_t>(esp_timer_get_time() / 1000000);
-        const bool online = network_ready();
+        const auto network_state = network.snapshot();
+        const bool online = network_state.active != NetworkPath::None;
+        if (network_state.active != previous_network.active ||
+            std::strcmp(network_state.ethernet_ip, previous_network.ethernet_ip) ||
+            std::strcmp(network_state.wifi_ip, previous_network.wifi_ip)) next_yandex = next_ha = 0;
+        previous_network = network_state;
         bool changed = false, request_yandex = false, request_ha = false;
         std::string result_message;
         bool result_error = false;
@@ -282,7 +298,7 @@ static void device_sync_task(void *)
             if (action.kind == ActionValue::Refresh) { request_yandex = request_ha = true; result_message = "Состояния обновлены"; }
             else {
                 const auto device = device_manager.getDeviceById(action.device_id);
-                if (!online) { result_error = true; result_message = "Нет сети. Проверьте Ethernet."; }
+                if (!online) { result_error = true; result_message = "Нет сети. Проверьте подключение к сети."; }
                 else if (!device || !device->available) { result_error = true; result_message = "Устройство недоступно. Обновите список."; }
                 else if (device->source == DeviceSource::HomeAssistant) {
                     request_ha = true;
@@ -328,7 +344,7 @@ static void device_sync_task(void *)
                 device_manager.clearSource(DeviceSource::HomeAssistant);
                 device_manager.clearSource(DeviceSource::Yandex);
                 connection.connected = false; connection.devices = 0;
-                if (connection.configured) snprintf(connection.message, sizeof(connection.message), "Нет сети. Проверьте Ethernet.");
+                if (connection.configured) snprintf(connection.message, sizeof(connection.message), "Нет сети. Проверьте подключение к сети.");
                 changed = true;
             }
             was_online = online;
@@ -347,7 +363,7 @@ static void device_sync_task(void *)
             if (ui_manager.setConnectionState(connection, &device_manager) == ESP_OK) { previous_connection = connection; connection_published = true; }
         }
         if (received || changed) {
-            if (!received && result_message.empty()) result_message = !online ? "Нет сети. Ожидание Ethernet..." : "Состояния устройств обновлены";
+            if (!received && result_message.empty()) result_message = !online ? "Нет сети. Ожидание сети..." : "Состояния устройств обновлены";
             ui_manager.setControlResult(&device_manager, result_message.c_str(), result_error || !online, received);
         }
         ulTaskNotifyTake(pdTRUE, pdMS_TO_TICKS(1000));
@@ -366,29 +382,11 @@ extern "C" void app_main()
     ui_manager.setActionHandler(enqueue_action);
     ui_manager.setAuthHandler(enqueue_auth);
     ui_manager.setConnectionHandler(enqueue_connection);
+    ui_manager.setWifiHandler(enqueue_wifi);
     ESP_ERROR_CHECK(ui_manager.init());
-    eth_event_group = xEventGroupCreate();
-    ESP_ERROR_CHECK(eth_event_group ? ESP_OK : ESP_ERR_NO_MEM);
-    ESP_ERROR_CHECK(esp_netif_init());
-    ESP_ERROR_CHECK(esp_event_loop_create_default());
-    uint8_t port_count = 0;
-    esp_eth_handle_t *handles = nullptr;
-    ESP_ERROR_CHECK(example_eth_init(&handles, &port_count));
-    ESP_ERROR_CHECK(port_count == 1 && handles ? ESP_OK : ESP_ERR_INVALID_STATE);
-    esp_netif_config_t cfg = ESP_NETIF_DEFAULT_ETH();
-    esp_netif_t *netif = esp_netif_new(&cfg);
-    ESP_ERROR_CHECK(netif ? ESP_OK : ESP_ERR_NO_MEM);
-    esp_eth_netif_glue_handle_t glue = esp_eth_new_netif_glue(handles[0]);
-    ESP_ERROR_CHECK(glue ? ESP_OK : ESP_ERR_NO_MEM);
-    ESP_ERROR_CHECK(esp_netif_attach(netif, glue));
-    ESP_ERROR_CHECK(esp_event_handler_register(ETH_EVENT, ESP_EVENT_ANY_ID,
-                                             eth_event_handler, nullptr));
-    ESP_ERROR_CHECK(esp_event_handler_register(IP_EVENT, IP_EVENT_ETH_GOT_IP,
-                                             ip_event_handler, nullptr));
-    ESP_ERROR_CHECK(esp_event_handler_register(IP_EVENT, IP_EVENT_ETH_LOST_IP,
-                                             ip_event_handler, nullptr));
-    ESP_ERROR_CHECK(esp_eth_start(handles[0]));
-    free(handles);
+    ESP_ERROR_CHECK(network.init());
+    HttpsClient::setInterfaceResolver([](char *name, size_t capacity) { return network.interfaceName(name, capacity); });
+    ESP_ERROR_CHECK(xTaskCreate(network_status_task, "network_status", 6144, nullptr, 4, nullptr) == pdPASS ? ESP_OK : ESP_ERR_NO_MEM);
     TaskHandle_t sync_handle = nullptr;
     ESP_ERROR_CHECK(xTaskCreate(device_sync_task, "device_sync", 16 * 1024, nullptr,
                                 5, &sync_handle) == pdPASS ? ESP_OK : ESP_ERR_NO_MEM);

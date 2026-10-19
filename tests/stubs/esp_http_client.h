@@ -2,6 +2,7 @@
 #include "esp_err.h"
 
 struct MockHttpClient;
+struct ifreq { char ifr_name[16]{}; };
 using esp_http_client_handle_t = MockHttpClient *;
 enum esp_http_client_method_t { HTTP_METHOD_GET, HTTP_METHOD_POST, HTTP_METHOD_PUT };
 enum esp_http_client_event_id_t {
@@ -25,6 +26,7 @@ struct esp_http_client_config_t {
     void *user_data = nullptr;
     int timeout_ms = 0;
     bool disable_auto_redirect = false;
+    struct ifreq *if_name = nullptr;
 };
 esp_http_client_handle_t esp_http_client_init(const esp_http_client_config_t *);
 esp_err_t esp_http_client_cleanup(esp_http_client_handle_t);

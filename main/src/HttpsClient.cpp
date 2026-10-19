@@ -4,6 +4,12 @@
 #include <cstdio>
 #include "esp_log.h"
 #include "esp_heap_caps.h"
+#ifdef ESP_PLATFORM
+#include "lwip/sockets.h"
+#include "net/if.h"
+#endif
+
+HttpsClient::InterfaceResolver HttpsClient::interface_resolver_ = nullptr;
 
 HttpsClient::HttpsClient(const char *baseUrl, size_t response_capacity)
 {
@@ -16,6 +22,11 @@ HttpsClient::HttpsClient(const char *baseUrl, size_t response_capacity)
     }
     this->baseUrl = baseUrl;
     response_capacity_ = response_capacity;
+    struct ifreq selected{};
+    if (interface_resolver_) {
+        if (!interface_resolver_(selected.ifr_name, sizeof(selected.ifr_name))) { isFail = true; return; }
+        config.if_name = &selected;
+    }
 
     response_buffer_ =
         static_cast<char *>(

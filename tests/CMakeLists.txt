@@ -21,6 +21,14 @@ target_compile_features(device_manager_tests PRIVATE cxx_std_17)
 target_include_directories(device_manager_tests PRIVATE
     stubs ../main/include/Device "${CJSON_ROOT}")
 enable_testing()
+find_program(HOSTED_TEST_MAKE_PROGRAM NAMES "${CMAKE_MAKE_PROGRAM}" REQUIRED)
+add_test(NAME hosted_init_guard COMMAND "${CMAKE_COMMAND}"
+    -S "${CMAKE_CURRENT_LIST_DIR}/cmake/hosted_init" -B "${CMAKE_CURRENT_BINARY_DIR}/hosted-init-guard"
+    -G "${CMAKE_GENERATOR}" "-DCMAKE_MAKE_PROGRAM=${HOSTED_TEST_MAKE_PROGRAM}")
+add_test(NAME hosted_init_guard_missing COMMAND "${CMAKE_COMMAND}"
+    "-DFIXTURE=${CMAKE_CURRENT_LIST_DIR}/cmake/hosted_init" "-DBUILD_DIR=${CMAKE_CURRENT_BINARY_DIR}/hosted-init-missing"
+    "-DGENERATOR=${CMAKE_GENERATOR}" "-DMAKE_PROGRAM=${HOSTED_TEST_MAKE_PROGRAM}"
+    -P "${CMAKE_CURRENT_LIST_DIR}/cmake/verify_missing_hosted_init.cmake")
 add_test(NAME device_manager COMMAND device_manager_tests)
 
 add_executable(https_client_tests https_client_test.cpp ../main/src/HttpsClient.cpp)
@@ -38,6 +46,16 @@ add_executable(home_assistant_tests home_assistant_test.cpp ../main/src/HomeAssi
 target_compile_features(home_assistant_tests PRIVATE cxx_std_17)
 target_include_directories(home_assistant_tests PRIVATE stubs ../main/include ../main/include/Device "${CJSON_ROOT}")
 add_test(NAME home_assistant COMMAND home_assistant_tests)
+
+add_executable(network_tests network_test.cpp ../main/src/Network.cpp)
+target_compile_features(network_tests PRIVATE cxx_std_17)
+target_include_directories(network_tests PRIVATE ../main/include)
+add_test(NAME network COMMAND network_tests)
+
+add_executable(hosted_buffer_tests hosted_buffer_test.cpp ../compat/idf61/hosted_buffer_alloc.c)
+target_compile_features(hosted_buffer_tests PRIVATE cxx_std_17)
+target_include_directories(hosted_buffer_tests PRIVATE hosted_stubs)
+add_test(NAME hosted_buffer COMMAND hosted_buffer_tests)
 
 add_executable(floor_plan_tests floor_plan_test.cpp ../main/src/FloorPlan.cpp ../main/src/HouseProjection.cpp "${CJSON_ROOT}/cJSON.c")
 target_compile_features(floor_plan_tests PRIVATE cxx_std_17)
@@ -65,6 +83,7 @@ if(HOME_PANEL_UI_TESTS)
         ../main/src/FloorPlan.cpp ../main/src/FloorPlanEditor.cpp ../main/src/PlanStorage.cpp
         ../main/src/HouseProjection.cpp ../main/src/HouseView.cpp ../main/src/AccountView.cpp
         ../main/src/ConnectionsView.cpp
+        ../main/src/NetworkView.cpp
         ../main/src/DeviceManager.cpp ../main/fonts/font_roboto_20.c "${CJSON_ROOT}/cJSON.c")
     target_compile_features(home_page_tests PRIVATE cxx_std_17)
     target_include_directories(home_page_tests PRIVATE stubs ../main/include ../main/include/Device
@@ -79,7 +98,7 @@ if(MSVC)
     file(GLOB_RECURSE project_headers CONFIGURE_DEPENDS
         "${CMAKE_CURRENT_LIST_DIR}/../main/include/*.hpp"
         "${CMAKE_CURRENT_LIST_DIR}/stubs/*.h")
-    foreach(test_target device_manager_tests https_client_tests yandex_auth_tests home_assistant_tests floor_plan_tests dma_compat_tests home_page_tests)
+    foreach(test_target device_manager_tests https_client_tests yandex_auth_tests home_assistant_tests network_tests floor_plan_tests dma_compat_tests home_page_tests)
         if(TARGET ${test_target})
             get_target_property(test_sources ${test_target} SOURCES)
             set_property(SOURCE ${test_sources} APPEND PROPERTY OBJECT_DEPENDS ${project_headers})

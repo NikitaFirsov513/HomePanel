@@ -22,11 +22,13 @@ static esp_err_t clear_body_error = ESP_OK;
 static std::string payload = "{\"devices\":[]}";
 static int http_status = 200;
 static esp_err_t perform_error = ESP_OK;
+static std::string bound_interface;
 
 esp_http_client_handle_t esp_http_client_init(const esp_http_client_config_t *config)
 {
     client = new MockHttpClient{};
     client->config = *config;
+    bound_interface = config->if_name ? config->if_name->ifr_name : "";
     return client;
 }
 esp_err_t esp_http_client_cleanup(esp_http_client_handle_t handle) { delete handle; client = nullptr; return ESP_OK; }
@@ -138,6 +140,26 @@ int main()
         CHECK(https.send(request).transport_error == ESP_ERR_INVALID_SIZE);
     }
     CHECK(client == nullptr);
+    payload = "[]";
+    HttpsClient::setInterfaceResolver([](char *name, size_t capacity) { std::snprintf(name, capacity, "en1"); return true; });
+    {
+        HttpsClient http("http://192.168.1.20:8123");
+        HttpsReq_t req{}; req.path = "/api/states";
+        CHECK(http.send(req).ok() && bound_interface == "en1");
+    }
+    HttpsClient::setInterfaceResolver([](char *name, size_t capacity) { std::snprintf(name, capacity, "st2"); return true; });
+    {
+        HttpsClient http("https://example.invalid");
+        HttpsReq_t req{}; req.path = "/devices";
+        CHECK(http.send(req).ok() && bound_interface == "st2");
+    }
+    HttpsClient::setInterfaceResolver([](char *, size_t) { return false; });
+    {
+        const auto before = requests; HttpsClient http("https://example.invalid");
+        HttpsReq_t req{}; req.path = "/devices";
+        CHECK(!http.send(req).ok() && requests == before);
+    }
+    HttpsClient::setInterfaceResolver(nullptr);
     {
         HttpsClient http("http://homeassistant.local:8123", 512 * 1024);
         HttpsReq_t req{}; req.path = "/api/states"; req.token = "local-test";

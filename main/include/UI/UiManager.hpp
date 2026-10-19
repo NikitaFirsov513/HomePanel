@@ -23,6 +23,7 @@ enum class UiMessageType : uint8_t
     CONTROL_RESULT,
     AUTH_STATE,
     CONNECTION_STATE,
+    NETWORK_STATE,
 };
 
 struct UiMessage
@@ -35,6 +36,7 @@ struct UiMessage
     bool finished = true;
     AuthSnapshot auth;
     ConnectionSnapshot connection;
+    NetworkSnapshot network;
 };
 static_assert(std::is_trivially_copyable<UiMessage>::value,
               "FreeRTOS queues require trivially copyable messages");
@@ -58,6 +60,8 @@ public:
     esp_err_t setAuthState(const AuthSnapshot &snapshot, DeviceManager *devices = nullptr);
     void setConnectionHandler(ConnectionsView::Handler handler) { home_page_.setConnectionHandler(handler); }
     esp_err_t setConnectionState(const ConnectionSnapshot &snapshot, DeviceManager *devices);
+    void setWifiHandler(NetworkView::Handler handler) { home_page_.setWifiHandler(handler); }
+    esp_err_t setNetworkState(const NetworkSnapshot &snapshot);
     esp_err_t setControlResult(DeviceManager *devices, const char *text, bool error, bool finished = true);
 
 private:
