@@ -25,8 +25,16 @@ esp_err_t UiManager::init()
     }
     ESP_ERROR_CHECK(bsp_display_lock(-1));
     home_page_.update({});
-    home_page_.setStatus("Ожидание подключения к сети...", false);
-    lv_screen_load(home_page_.root());
+    home_page_.setStatus("Подготавливаем подключения...", false, false);
+    home_page_.setDeviceLoadState(DeviceLoadState::Starting);
+    loading_page_.create(); loading_page_.setText("Подготавливаем панель");
+    lv_screen_load(loading_page_.root());
+    auto *boot_timer = lv_timer_create([](lv_timer_t *timer) {
+        auto *self = static_cast<UiManager *>(lv_timer_get_user_data(timer));
+        if (lv_screen_active() == self->loading_page_.root()) lv_screen_load(self->home_page_.root());
+        self->loading_page_.stop();
+    }, 1100, this);
+    lv_timer_set_repeat_count(boot_timer, 1);
 #if CONFIG_HOME_PANEL_LOG_FPS
     if (esp_lv_adapter_fps_stats_enable(nullptr, true) == ESP_OK) {
         lv_timer_create([](lv_timer_t *) {
@@ -77,6 +85,9 @@ void UiManager::ui_process_message(const UiMessage &msg)
     }
     ESP_ERROR_CHECK(bsp_display_lock(-1));
     switch (msg.type) {
+    case UiMessageType::DEVICE_LOAD_STATE:
+        home_page_.setDeviceLoadState(msg.device_load);
+        break;
     case UiMessageType::NETWORK_STATE:
         home_page_.updateNetwork(msg.network);
         break;
@@ -96,7 +107,7 @@ void UiManager::ui_process_message(const UiMessage &msg)
         break;
     case UiMessageType::SET_HOME_PAGE:
         home_page_.update(devices);
-        lv_screen_load(home_page_.root());
+        if (lv_screen_active() != loading_page_.root()) lv_screen_load(home_page_.root());
         break;
     case UiMessageType::CONTROL_RESULT:
         // A periodic refresh must not release controls belonging to an action
@@ -104,7 +115,7 @@ void UiManager::ui_process_message(const UiMessage &msg)
         if (!msg.finished && home_page_.busy()) break;
         home_page_.setStatus(msg.text, msg.error);
         if (snapshot_available) home_page_.update(devices);
-        lv_screen_load(home_page_.root());
+        if (lv_screen_active() != home_page_.root() && lv_screen_active() != loading_page_.root()) lv_screen_load(home_page_.root());
         break;
     }
     bsp_display_unlock();
@@ -173,5 +184,10 @@ esp_err_t UiManager::setConnectionState(const ConnectionSnapshot &snapshot, Devi
 {
     UiMessage msg{}; msg.type = UiMessageType::CONNECTION_STATE; msg.connection = snapshot;
     msg.device_manager = devices;
+    return ui_send(msg) ? ESP_OK : ESP_FAIL;
+}
+
+esp_err_t UiManager::setDeviceLoadState(DeviceLoadState state) {
+    UiMessage msg{}; msg.type = UiMessageType::DEVICE_LOAD_STATE; msg.device_load = state;
     return ui_send(msg) ? ESP_OK : ESP_FAIL;
 }

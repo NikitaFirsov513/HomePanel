@@ -8,6 +8,7 @@ public:
     void create() override;
     void setText(
         const char *text, bool loading = true);
+    void stop();
 
 private:
     lv_obj_t *spinner_ = nullptr;

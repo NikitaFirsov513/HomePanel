@@ -52,6 +52,10 @@ target_compile_features(network_tests PRIVATE cxx_std_17)
 target_include_directories(network_tests PRIVATE ../main/include)
 add_test(NAME network COMMAND network_tests)
 
+add_executable(device_load_tests device_load_test.cpp)
+target_include_directories(device_load_tests PRIVATE ../main/include)
+add_test(NAME device_load COMMAND device_load_tests)
+
 add_executable(hosted_buffer_tests hosted_buffer_test.cpp ../compat/idf61/hosted_buffer_alloc.c)
 target_compile_features(hosted_buffer_tests PRIVATE cxx_std_17)
 target_include_directories(hosted_buffer_tests PRIVATE hosted_stubs)
@@ -79,7 +83,7 @@ if(HOME_PANEL_UI_TESTS)
     set(CONFIG_LV_USE_THORVG OFF CACHE BOOL "" FORCE)
     add_subdirectory(../managed_components/lvgl__lvgl lvgl)
     target_compile_definitions(lvgl PUBLIC LV_USE_STDLIB_MALLOC=1 LV_USE_STDLIB_SPRINTF=1 LV_USE_QRCODE=1)
-    add_executable(home_page_tests home_page_test.cpp ../main/src/HomePage.cpp ../main/src/DeviceIcon.cpp
+    add_executable(home_page_tests home_page_test.cpp ../main/src/LoadingPage.cpp ../main/src/HomePage.cpp ../main/src/DeviceIcon.cpp
         ../main/src/FloorPlan.cpp ../main/src/FloorPlanEditor.cpp ../main/src/PlanStorage.cpp
         ../main/src/HouseProjection.cpp ../main/src/HouseView.cpp ../main/src/AccountView.cpp
         ../main/src/ConnectionsView.cpp

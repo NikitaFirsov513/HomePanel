@@ -1,3 +1,4 @@
+#include "LoadingPage.hpp"
 #include "HomePage.hpp"
 #include <cstdio>
 #include <cstdlib>
@@ -178,20 +179,40 @@ int main()
         auto *on = textButton(page.root(), "Включить"); CHECK(on);
         lv_obj_send_event(on, LV_EVENT_CLICKED, nullptr);
         CHECK(calls == 1 && page.busy() && last.boolean && !strcmp(last.device_id, "lamp"));
+        auto *loader = find(on, &lv_spinner_class); CHECK(loader && lv_obj_is_visible(loader));
+        auto *off = textButton(page.root(), "Выключить"); CHECK(off);
+        CHECK(lv_obj_has_state(on, LV_STATE_DISABLED) && !lv_obj_has_state(off, LV_STATE_DISABLED));
+        CHECK(!lv_obj_has_state(open_list, LV_STATE_DISABLED));
+        snapshot(display, "control-pending.ppm");
+
         lv_obj_send_event(on, LV_EVENT_CLICKED, nullptr);
         CHECK(calls == 1);
         page.update({}); // Do not destroy widgets while a request is outstanding.
         CHECK(textButton(page.root(), "Включить") == on);
         page.setStatus("Команда выполнена", false);
         page.update(devices);
+        CHECK(textButton(page.root(), lamp.name.c_str()) == card);
+        CHECK(textButton(page.root(), "Включить") == on && textButton(page.root(), "Выключить") == off);
+        CHECK(!find(page.root(), &lv_spinner_class));
+        CHECK(!lv_obj_has_state(on, LV_STATE_DISABLED));
+        // State changes update existing objects and retain current bindings.
+        auto changed_devices = devices; changed_devices[0].controls[0].boolean = true;
+        page.update(changed_devices);
+        CHECK(textButton(page.root(), "Включить") == on);
+        CHECK((lv_color_to_u32(lv_obj_get_style_bg_color(on, LV_PART_MAIN)) & 0xFFFFFF) == 0xD9EFE5);
+        page.update(devices);
+
         auto *slider = find(page.root(), &lv_slider_class); CHECK(slider);
         lv_slider_set_value(slider, 69, LV_ANIM_OFF);
         lv_obj_send_event(slider, LV_EVENT_VALUE_CHANGED, nullptr);
         CHECK(calls == 1);
         lv_obj_send_event(slider, LV_EVENT_RELEASED, nullptr);
         CHECK(calls == 2 && last.number == 70 && page.busy());
+        CHECK(find(page.root(), &lv_spinner_class));
         page.setStatus("Ошибка устройства", true);
         page.update(devices);
+        CHECK(find(page.root(), &lv_slider_class) == slider && !find(page.root(), &lv_spinner_class));
+        CHECK(lv_slider_get_value(slider) == 39);
         // Color is a row of swatches. Find the button painted pure red.
         lv_obj_t *swatch = nullptr;
         auto locateRed = [&](auto &&self, lv_obj_t *obj) -> void {
@@ -656,6 +677,65 @@ int main()
         CHECK(lv_textarea_get_password_mode(password));
         lv_obj_update_layout(page.root()); lv_obj_get_coords(badge, &area);
         CHECK(area.x1 >= 0 && area.x2 < 1024 && area.y2 < 64);
+    }
+    {
+        HomePage page; page.setActionHandler(send);
+        AuthSnapshot connected; connected.authorized = true; connected.state = AuthState::Authorized; page.updateAuth(connected);
+        Device a; a.id = "stable-a"; a.name = "Первая лампа"; a.type = "devices.types.light";
+        DeviceControl on; on.type = "devices.capabilities.on_off"; on.instance = "on"; on.known = true; a.controls = {on};
+        Device b = a; b.id = "stable-b"; b.name = "Вторая лампа";
+        page.update({a, b}); lv_screen_load(page.root()); page.navigate(HomePage::View::Devices);
+        auto *first = textButton(page.root(), a.name.c_str()); auto *second = textButton(page.root(), b.name.c_str()); CHECK(first && second);
+        auto *quick = find(first, &lv_button_class); auto *peer = find(second, &lv_button_class); CHECK(quick && peer);
+        const auto before = calls;
+        lv_obj_send_event(quick, LV_EVENT_CLICKED, nullptr);
+        CHECK(calls == before + 1 && last.boolean && find(quick, &lv_spinner_class));
+        CHECK(!lv_obj_has_state(peer, LV_STATE_DISABLED));
+        snapshot(display, "quick-control-pending.ppm");
+        page.setStatus("Команда выполнена", false); a.controls[0].boolean = true; page.update({a, b});
+        CHECK(textButton(page.root(), a.name.c_str()) == first && textButton(page.root(), b.name.c_str()) == second);
+        CHECK(find(first, &lv_button_class) == quick && find(second, &lv_button_class) == peer);
+        CHECK(!find(page.root(), &lv_spinner_class) && !lv_obj_has_flag(lv_obj_get_child(quick, 0), LV_OBJ_FLAG_HIDDEN));
+        lv_obj_send_event(quick, LV_EVENT_CLICKED, nullptr);
+        CHECK(calls == before + 2 && !last.boolean); // The retained button uses the updated state.
+        page.setStatus("Ошибка сети", true); page.update({a, b}); CHECK(!find(page.root(), &lv_spinner_class));
+    }
+    {
+        LoadingPage boot; boot.create(); boot.setText("Подготавливаем панель"); lv_screen_load(boot.root());
+        CHECK(find(boot.root(), &lv_spinner_class)); checkGlyphs(boot.root()); snapshot(display, "startup-splash.ppm");
+        boot.stop(); CHECK(!find(boot.root(), &lv_spinner_class));
+        HomePage page; page.setActionHandler(send); page.update({}); lv_screen_load(page.root());
+        page.setDeviceLoadState(DeviceLoadState::Starting);
+        CHECK(textButton(page.root(), "Подготавливаем ваш дом") && find(page.root(), &lv_spinner_class));
+        CHECK(!textButton(page.root(), "Устройств: 0"));
+        page.setDeviceLoadState(DeviceLoadState::NoAccounts);
+        CHECK(!find(page.root(), &lv_spinner_class));
+        snapshot(display, "startup-no-account.ppm");
+        auto *connect = textButton(page.root(), "Подключить аккаунт"); CHECK(connect);
+        lv_obj_send_event(connect, LV_EVENT_CLICKED, nullptr); CHECK(page.view() == HomePage::View::Connections);
+        auto *empty_panel = textButton(page.root(), "Добавьте ваш умный дом"); CHECK(empty_panel && !lv_obj_is_visible(empty_panel));
+        page.navigate(HomePage::View::Devices); page.setDeviceLoadState(DeviceLoadState::Offline);
+        CHECK(find(page.root(), &lv_spinner_class)); snapshot(display, "startup-wait-network.ppm");
+        auto *network = textButton(page.root(), "Настроить сеть"); CHECK(network);
+        lv_obj_send_event(network, LV_EVENT_CLICKED, nullptr); CHECK(page.view() == HomePage::View::Network);
+        CHECK(!find(page.root(), &lv_spinner_class));
+        page.navigate(HomePage::View::Devices); page.setDeviceLoadState(DeviceLoadState::Loading);
+        CHECK(textButton(page.root(), "Загружаем устройства") && find(page.root(), &lv_spinner_class));
+        snapshot(display, "startup-fetching.ppm");
+        page.setDeviceLoadState(DeviceLoadState::Error);
+        CHECK(!find(page.root(), &lv_spinner_class) && textButton(page.root(), "Не удалось загрузить устройства"));
+        snapshot(display, "startup-load-error.ppm");
+        AuthSnapshot auth; auth.authorized = true; auth.state = AuthState::Authorized; page.updateAuth(auth);
+        page.setDeviceLoadState(DeviceLoadState::Ready);
+        CHECK(!find(page.root(), &lv_spinner_class) && textButton(page.root(), "Устройств пока нет"));
+        CHECK(textButton(page.root(), "Устройств: 0")); snapshot(display, "startup-empty.ppm");
+        auto *refresh = textButton(page.root(), "Обновить список"); CHECK(refresh); const auto before = calls;
+        lv_obj_send_event(refresh, LV_EVENT_CLICKED, nullptr); CHECK(calls == before + 1 && last.kind == ActionValue::Refresh);
+        CHECK(find(refresh, &lv_spinner_class)); page.setStatus("Список обновлён", false);
+        Device device; device.id = "arrived"; device.name = "Первая лампа"; page.update({device});
+        CHECK(!lv_obj_is_visible(textButton(page.root(), "Устройств пока нет")));
+        CHECK(!find(page.root(), &lv_spinner_class));
+        checkGlyphs(page.root());
     }
     lv_display_delete(display);
     lv_deinit();

@@ -7,6 +7,7 @@
 #include "AccountView.hpp"
 #include "ConnectionsView.hpp"
 #include "NetworkView.hpp"
+#include "DeviceLoadState.hpp"
 #include <array>
 class HomePage : public Page
 {
@@ -28,8 +29,24 @@ public:
     void updateConnection(const ConnectionSnapshot &snapshot);
     void setWifiHandler(NetworkView::Handler handler) { network_.setHandler(handler); }
     void updateNetwork(const NetworkSnapshot &snapshot);
+    void setDeviceLoadState(DeviceLoadState state);
 
 private:
+    DeviceLoadState load_state_ = DeviceLoadState::Starting;
+    bool load_state_seen_ = false;
+    lv_obj_t *empty_panel_ = nullptr, *empty_spinner_ = nullptr, *empty_icon_ = nullptr, *empty_title_ = nullptr, *empty_text_ = nullptr;
+    lv_obj_t *empty_primary_ = nullptr, *empty_secondary_ = nullptr;
+    void updateEmptyState();
+    void emptyAction(bool primary);
+    struct Binding;
+    struct CardWidgets { lv_obj_t *state, *dot, *quick; Binding *binding; };
+    std::vector<CardWidgets> cards_;
+    std::vector<Binding *> bindings_;
+    lv_obj_t *pending_widget_ = nullptr, *pending_loader_ = nullptr;
+    std::vector<lv_obj_t *> pending_hidden_;
+    void clearPending();
+    void showPending(lv_obj_t *widget);
+    void updateControls(const Device &device);
     View view_ = View::House;
     bool authorized_ = false;
     bool yandex_authorized_ = false, ha_configured_ = false, ha_connected_ = false;
@@ -61,9 +78,8 @@ private:
     void closeDetails();
     void showDetails(const Device &device);
     void createControls(const Device &device, lv_obj_t *body);
-    struct Binding;
     static void controlEvent(lv_event_t *event);
-    void submit(const DeviceAction &action);
+    void submit(const DeviceAction &action, lv_obj_t *widget = nullptr);
     void bind(lv_obj_t *widget, Binding *binding, lv_event_code_t code);
     FloorPlanEditor editor_;
     AccountView account_;

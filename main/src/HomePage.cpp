@@ -68,6 +68,24 @@ lv_obj_t *button(lv_obj_t *parent, const char *text)
     lv_obj_center(caption);
     return obj;
 }
+bool sameLayout(const Device &a, const Device &b) {
+    if (a.id != b.id || a.name != b.name || a.type != b.type || a.room != b.room ||
+        a.source != b.source || a.available != b.available || a.controls.size() != b.controls.size()) return false;
+    for (size_t i = 0; i < a.controls.size(); ++i) {
+        const auto &x = a.controls[i], &y = b.controls[i];
+        if (x.type != y.type || x.instance != y.instance || x.kind != y.kind || x.minimum != y.minimum ||
+            x.maximum != y.maximum || x.step != y.step || x.relative_only != y.relative_only || x.options.size() != y.options.size()) return false;
+        for (size_t j = 0; j < x.options.size(); ++j) if (x.options[j].value != y.options[j].value) return false;
+    }
+    return true;
+}
+bool sameValues(const DeviceControl &a, const DeviceControl &b) {
+    return a.known == b.known && a.boolean == b.boolean && a.number == b.number && a.text == b.text;
+}
+bool powered(const Device &device) {
+    for (const auto &c : device.controls) if (c.instance == "on" && c.kind == ControlKind::Toggle) return c.known && c.boolean;
+    return false;
+}
 std::string summary(const Device &device)
 {
     if (!device.available) return "Недоступно";
@@ -102,7 +120,7 @@ struct HomePage::Binding {
 void HomePage::bind(lv_obj_t *widget, Binding *binding, lv_event_code_t code)
 {
     binding->page = this;
-    widgets_.push_back(widget);
+    widgets_.push_back(widget); bindings_.push_back(binding);
     lv_obj_add_event_cb(widget, controlEvent, code, binding);
     if (binding->slider) lv_obj_add_event_cb(widget, controlEvent, LV_EVENT_VALUE_CHANGED, binding);
     lv_obj_add_event_cb(widget, [](lv_event_t *event) {
@@ -121,14 +139,14 @@ void HomePage::setStatus(const char *text, bool error, bool finished)
     if (finished) {
         busy_ = false;
         pending_device_id_.clear();
-        for (auto *obj : widgets_) lv_obj_set_disabled(obj, false);
+        clearPending();
         if (!widgets_.empty()) lv_obj_set_disabled(widgets_.front(), !authorized_);
         if (close_) lv_obj_set_disabled(close_, false);
         for (auto *obj : nav_buttons_) lv_obj_set_disabled(obj, false);
     }
 }
 
-void HomePage::submit(const DeviceAction &action)
+void HomePage::submit(const DeviceAction &action, lv_obj_t *widget)
 {
     if (busy_) return;
     if (!authorized_) { navigate(View::Connections); return; }
@@ -143,9 +161,7 @@ void HomePage::submit(const DeviceAction &action)
     busy_ = true;
     pending_device_id_ = action.device_id;
     setStatus(action.kind == ActionValue::Refresh ? "Обновление устройств..." : "Отправка команды...", false, false);
-    for (auto *obj : widgets_) lv_obj_set_disabled(obj, true);
-    if (close_) lv_obj_set_disabled(close_, true);
-    for (auto *obj : nav_buttons_) lv_obj_set_disabled(obj, true);
+    showPending(widget);
 }
 
 void HomePage::controlEvent(lv_event_t *event)
@@ -170,7 +186,7 @@ void HomePage::controlEvent(lv_event_t *event)
         if (value.size() >= sizeof(b->action.text)) return;
         snprintf(b->action.text, sizeof(b->action.text), "%s", value.c_str());
     }
-    b->page->submit(b->action);
+    b->page->submit(b->action, obj);
 }
 
 
@@ -179,7 +195,7 @@ void HomePage::closeDetails()
     if (busy_) return;
     expanded_id_.clear();
     lv_label_set_text(detail_title_, "");
-    widgets_.resize(card_widget_count_);
+    widgets_.resize(card_widget_count_); bindings_.resize(card_widget_count_);
     lv_obj_clean(details_);
     lv_obj_set_hidden(overlay_, true);
 }
@@ -193,7 +209,7 @@ void HomePage::toggleDevice(const std::string &id)
 
 void HomePage::showDetails(const Device &device)
 {
-    widgets_.resize(card_widget_count_);
+    widgets_.resize(card_widget_count_); bindings_.resize(card_widget_count_);
     lv_obj_clean(details_);
     if (expanded_id_ != device.id) {
         lv_label_set_text(detail_status_, "Изменения применяются сразу");
@@ -343,6 +359,25 @@ void HomePage::create()
     lv_obj_set_style_bg_color(network_badge_, lv_color_hex(0xFFF0DF), 0);
     lv_obj_set_style_text_color(network_badge_, lv_color_hex(0xAE6342), 0);
     lv_obj_add_event_cb(network_badge_, [](lv_event_t *event) { static_cast<HomePage *>(lv_event_get_user_data(event))->navigate(View::Network); }, LV_EVENT_CLICKED, this);
+    empty_panel_ = lv_obj_create(root_); surface(empty_panel_, 0xFFFFFF, 24);
+    lv_obj_set_floating(empty_panel_, true); lv_obj_set_size(empty_panel_, LV_PCT(100), 420); lv_obj_set_pos(empty_panel_, 0, 0);
+    empty_icon_ = lv_obj_create(empty_panel_); surface(empty_icon_, 0xF0ECFC, 20);
+    lv_obj_set_size(empty_icon_, 72, 72); lv_obj_align(empty_icon_, LV_ALIGN_TOP_MID, 0, 24);
+    lv_obj_center(createDeviceIcon(empty_icon_, DeviceIcon::Generic, ACCENT, 44));
+    empty_title_ = label(empty_panel_, ""); lv_obj_set_width(empty_title_, 880);
+    lv_obj_set_style_text_align(empty_title_, LV_TEXT_ALIGN_CENTER, 0); lv_obj_align(empty_title_, LV_ALIGN_TOP_MID, 0, 118);
+    empty_text_ = label(empty_panel_, ""); lv_obj_set_width(empty_text_, 780);
+    lv_obj_set_style_text_align(empty_text_, LV_TEXT_ALIGN_CENTER, 0); lv_obj_set_style_text_color(empty_text_, lv_color_hex(MUTED), 0);
+    lv_obj_align(empty_text_, LV_ALIGN_TOP_MID, 0, 164);
+    empty_primary_ = button(empty_panel_, ""); lv_obj_set_width(empty_primary_, 280); lv_obj_align(empty_primary_, LV_ALIGN_TOP_MID, -148, 292);
+    lv_obj_set_style_bg_color(empty_primary_, lv_color_hex(ACCENT), 0); lv_obj_set_style_text_color(empty_primary_, lv_color_hex(0xFFFFFF), 0);
+    empty_secondary_ = button(empty_panel_, ""); lv_obj_set_width(empty_secondary_, 280); lv_obj_align(empty_secondary_, LV_ALIGN_TOP_MID, 148, 292);
+    lv_obj_add_event_cb(empty_primary_, [](lv_event_t *e) { static_cast<HomePage *>(lv_event_get_user_data(e))->emptyAction(true); }, LV_EVENT_CLICKED, this);
+    lv_obj_add_event_cb(empty_secondary_, [](lv_event_t *e) { static_cast<HomePage *>(lv_event_get_user_data(e))->emptyAction(false); }, LV_EVENT_CLICKED, this);
+    auto *hint = label(empty_panel_, "План дома можно редактировать в любое время"); lv_obj_set_width(hint, 880);
+    lv_obj_set_style_text_align(hint, LV_TEXT_ALIGN_CENTER, 0); lv_obj_set_style_text_color(hint, lv_color_hex(MUTED), 0);
+    lv_obj_align(hint, LV_ALIGN_TOP_MID, 0, 370);
+    lv_obj_set_hidden(empty_panel_, true);
     navigate(View::House);
     rebuildDevices({}, true);
 }
@@ -363,6 +398,7 @@ void HomePage::navigate(View view)
         lv_obj_set_style_bg_color(nav_buttons_[i], lv_color_hex(active ? ACCENT : 0xF3F4F7), 0);
         lv_obj_set_style_text_color(nav_buttons_[i], lv_color_hex(active ? 0xFFFFFF : MUTED), 0);
     }
+    updateEmptyState();
     lv_obj_move_foreground(navigation_);
 }
 
@@ -424,13 +460,14 @@ void HomePage::pruneSources() {
     retained.erase(std::remove_if(retained.begin(), retained.end(), [&](const Device &d) { return !acceptsSource(d); }), retained.end());
     if (busy_ && !pending_device_id_.empty() && std::none_of(retained.begin(), retained.end(),
         [&](const Device &d) { return d.id == pending_device_id_; })) {
-        busy_ = false; pending_device_id_.clear();
+        busy_ = false; pending_device_id_.clear(); clearPending();
     }
     if (!busy_) {
         closeDetails();
         for (auto *obj : nav_buttons_) lv_obj_set_disabled(obj, false);
     }
     rebuildDevices(retained, true);
+    updateEmptyState();
 }
 
 void HomePage::update(const std::vector<Device> &devices)
@@ -439,6 +476,7 @@ void HomePage::update(const std::vector<Device> &devices)
     auto visible = devices;
     visible.erase(std::remove_if(visible.begin(), visible.end(), [&](const Device &d) { return !acceptsSource(d); }), visible.end());
     rebuildDevices(visible);
+    updateEmptyState();
 }
 
 void HomePage::rebuildDevices(const std::vector<Device> &devices, bool force)
@@ -448,9 +486,51 @@ void HomePage::rebuildDevices(const std::vector<Device> &devices, bool force)
         if (lv_obj_has_state(obj, LV_STATE_PRESSED)) return;
         if (lv_obj_check_type(obj, &lv_dropdown_class) && lv_dropdown_is_open(obj)) return;
     }
+    bool compatible = !force && cards_.size() == devices.size() && devices_.size() == devices.size();
+    for (size_t i = 0; compatible && i < devices.size(); ++i) compatible = sameLayout(devices_[i], devices[i]);
+    if (compatible) {
+        lv_obj_set_disabled(widgets_.front(), !authorized_);
+        if (devices.empty() && lv_obj_get_child_count(list_)) {
+            auto *empty = lv_obj_get_child(list_, 0);
+            if (lv_obj_check_type(empty, &lv_label_class)) {
+                const char *message = authorized_ ? "Устройств пока нет. Обновите список или проверьте подключения." : "Откройте Подключения и добавьте систему умного дома.";
+                if (std::strcmp(lv_label_get_text(empty), message)) lv_label_set_text(empty, message);
+            }
+        }
+        bool changed = false, readings_changed = false;
+        for (size_t i = 0; i < devices.size(); ++i) {
+            const auto &device = devices[i], &old = devices_[i];
+            auto &nodes = cards_[i];
+            const auto state = summary(device);
+            if (state != lv_label_get_text(nodes.state)) lv_label_set_text(nodes.state, state.c_str());
+            const bool active = powered(device);
+            if (active != powered(old)) {
+                lv_obj_set_style_bg_color(nodes.dot, lv_color_hex(active ? 0x3D9F7B : 0xBEC3CF), 0);
+                lv_obj_set_style_text_color(nodes.state, lv_color_hex(active ? 0x2D8669 : MUTED), 0);
+                if (nodes.quick) {
+                    lv_obj_set_style_bg_color(nodes.quick, lv_color_hex(active ? 0xE3F3EC : 0xF2F3F7), 0);
+                    lv_obj_set_style_text_color(lv_obj_get_child(nodes.quick, 0), lv_color_hex(active ? 0x2D8669 : 0x7C8392), 0);
+                }
+            }
+            if (nodes.binding) nodes.binding->action.boolean = !active;
+            if (old.readings != device.readings) { changed = true; if (device.id == expanded_id_) readings_changed = true; }
+            for (size_t j = 0; j < device.controls.size(); ++j) if (!sameValues(old.controls[j], device.controls[j])) changed = true;
+        }
+        devices_ = devices;
+        if (changed) editor_.setDevices(devices_);
+        const auto selected = std::find_if(devices_.begin(), devices_.end(), [&](const Device &d) { return d.id == expanded_id_; });
+        if (selected != devices_.end()) {
+            if (readings_changed) {
+                const auto y = lv_obj_get_scroll_y(details_); showDetails(*selected);
+                lv_obj_update_layout(details_); lv_obj_scroll_to_y(details_, y, LV_ANIM_OFF);
+            } else updateControls(*selected);
+        }
+        return;
+    }
     const int32_t scroll_y = lv_obj_get_scroll_y(list_);
     const int32_t detail_scroll_y = lv_obj_get_scroll_y(details_);
-    widgets_.resize(1);
+    clearPending(); cards_.clear();
+    widgets_.resize(1); bindings_.resize(1);
     lv_obj_clean(details_);
     lv_obj_clean(list_);
     devices_ = devices;
@@ -508,6 +588,7 @@ void HomePage::rebuildDevices(const std::vector<Device> &devices, bool force)
         lv_obj_set_pos(state, 34, 89);
         lv_obj_set_width(state, card_width - 55);
         lv_label_set_long_mode(state, LV_LABEL_LONG_DOT);
+        CardWidgets nodes{state, dot, nullptr, nullptr};
         if (device.available && power != device.controls.end() && device.id.size() < sizeof(DeviceAction::device_id)) {
             auto *quick = lv_button_create(card);
             surface(quick, active ? 0xE3F3EC : 0xF2F3F7, LV_RADIUS_CIRCLE);
@@ -518,8 +599,9 @@ void HomePage::rebuildDevices(const std::vector<Device> &devices, bool force)
             snprintf(b->action.type, sizeof(b->action.type), "%s", power->type.c_str());
             snprintf(b->action.instance, sizeof(b->action.instance), "%s", power->instance.c_str());
             b->action.boolean = !active;
-            bind(quick, b, LV_EVENT_CLICKED);
+            bind(quick, b, LV_EVENT_CLICKED); nodes.quick = quick; nodes.binding = b;
         }
+        cards_.push_back(nodes);
     }
     card_widget_count_ = widgets_.size();
     const auto selected = std::find_if(devices_.begin(), devices_.end(),
@@ -535,7 +617,7 @@ void HomePage::rebuildDevices(const std::vector<Device> &devices, bool force)
     lv_obj_update_layout(list_);
     lv_obj_scroll_to_y(list_, scroll_y, LV_ANIM_OFF);
     // An unrelated connection can change while another source's command is in flight.
-    if (busy_) for (auto *obj : widgets_) lv_obj_set_disabled(obj, true);
+    // A pending request never changes the appearance of unrelated controls.
 }
 
 void HomePage::createControls(const Device &device, lv_obj_t *body)
@@ -558,7 +640,7 @@ void HomePage::createControls(const Device &device, lv_obj_t *body)
             bind(obj, b, LV_EVENT_CLICKED);
         } else if (c.kind == ControlKind::Toggle) {
             const std::string state = c.known ? (c.boolean ? "Вкл." : "Выкл.") : "неизвестно";
-            label(body, (std::string(title(c.instance)) + ": " + state).c_str());
+            auto *caption = label(body, (std::string(title(c.instance)) + ": " + state).c_str());
             auto *row = lv_obj_create(body);
             surface(row, 0xFFFFFF, 0);
             lv_obj_set_style_pad_column(row, 8, 0);
@@ -574,7 +656,7 @@ void HomePage::createControls(const Device &device, lv_obj_t *body)
                     lv_obj_set_style_bg_color(obj, lv_color_hex(0xD9EFE5), 0);
                     lv_obj_set_style_text_color(obj, lv_color_hex(0x2D8669), 0);
                 }
-                auto *b = make(); b->action.boolean = on;
+                auto *b = make(); b->action.boolean = on; b->caption = caption;
                 bind(obj, b, LV_EVENT_CLICKED);
             }
         } else if (c.kind == ControlKind::Range) {
@@ -589,7 +671,7 @@ void HomePage::createControls(const Device &device, lv_obj_t *body)
                 lv_obj_set_flex_flow(row, LV_FLEX_FLOW_ROW);
                 for (int sign : {-1, 1}) {
                     auto *obj = button(row, sign < 0 ? "Уменьшить" : "Увеличить");
-                    auto *b = make(); b->action.kind = ActionValue::Number;
+                    auto *b = make(); b->caption = caption; b->action.kind = ActionValue::Number;
                     b->action.relative = true; b->action.number = sign * c.step;
                     bind(obj, b, LV_EVENT_CLICKED);
                 }
@@ -657,4 +739,123 @@ void HomePage::createControls(const Device &device, lv_obj_t *body)
             lv_obj_set_style_text_font(lv_dropdown_get_list(obj), &font_roboto_20, 0);
         }
     }
+}
+
+void HomePage::clearPending() {
+    if (pending_loader_) { lv_obj_delete(pending_loader_); pending_loader_ = nullptr; }
+    for (auto *child : pending_hidden_) lv_obj_set_hidden(child, false);
+    pending_hidden_.clear();
+    if (pending_widget_) { lv_obj_set_disabled(pending_widget_, false); pending_widget_ = nullptr; }
+}
+void HomePage::showPending(lv_obj_t *widget) {
+    clearPending(); if (!widget) return;
+    pending_widget_ = widget;
+    lv_obj_update_layout(widget);
+    const bool compact = lv_obj_get_width(widget) < 80;
+    if (compact) for (uint32_t i = 0; i < lv_obj_get_child_count(widget); ++i) {
+        auto *child = lv_obj_get_child(widget, i);
+        if (!lv_obj_has_flag(child, LV_OBJ_FLAG_HIDDEN)) { pending_hidden_.push_back(child); lv_obj_set_hidden(child, true); }
+    }
+    const bool slider = lv_obj_check_type(widget, &lv_slider_class);
+    pending_loader_ = lv_spinner_create(slider ? lv_obj_get_parent(widget) : widget);
+    lv_obj_set_floating(pending_loader_, true); lv_obj_set_size(pending_loader_, 26, 26);
+    lv_obj_set_clickable(pending_loader_, false);
+    lv_spinner_set_anim_params(pending_loader_, 900, 200);
+    lv_obj_set_style_bg_opa(pending_loader_, LV_OPA_TRANSP, 0);
+    lv_obj_set_style_arc_width(pending_loader_, 3, LV_PART_MAIN);
+    lv_obj_set_style_arc_width(pending_loader_, 3, LV_PART_INDICATOR);
+    lv_obj_set_style_arc_color(pending_loader_, lv_color_hex(0xDDD7F3), LV_PART_MAIN);
+    lv_obj_set_style_arc_color(pending_loader_, lv_color_hex(ACCENT), LV_PART_INDICATOR);
+    if (slider) lv_obj_align_to(pending_loader_, widget, LV_ALIGN_OUT_RIGHT_MID, 6, 0);
+    else lv_obj_align(pending_loader_, compact ? LV_ALIGN_CENTER : LV_ALIGN_RIGHT_MID, compact ? 0 : -8, 0);
+    lv_obj_set_disabled(widget, true);
+}
+void HomePage::updateControls(const Device &device) {
+    for (size_t i = card_widget_count_; i < widgets_.size(); ++i) {
+        auto *obj = widgets_[i]; auto *b = bindings_[i];
+        const auto it = std::find_if(device.controls.begin(), device.controls.end(), [&](const DeviceControl &c) {
+            return c.type == b->control.type && c.instance == b->control.instance;
+        });
+        if (it == device.controls.end()) continue;
+        const auto &c = *it;
+        const bool changed = !sameValues(c, b->control);
+        if (c.kind == ControlKind::Toggle && changed) {
+            if (b->caption) lv_label_set_text_fmt(b->caption, "%s: %s", title(c.instance), c.known ? c.boolean ? "Вкл." : "Выкл." : "неизвестно");
+            const bool selected = c.known && c.boolean == b->action.boolean;
+            lv_obj_set_style_bg_color(obj, lv_color_hex(selected ? 0xD9EFE5 : 0xF0EDF9), 0);
+            lv_obj_set_style_text_color(obj, lv_color_hex(selected ? 0x2D8669 : ACCENT), 0);
+        } else if (c.kind == ControlKind::Range) {
+            if (b->caption) {
+                if (c.known) lv_label_set_text_fmt(b->caption, "%s: %g", title(c.instance), c.number);
+                else lv_label_set_text_fmt(b->caption, "%s: неизвестно", title(c.instance));
+            }
+            if (b->slider) {
+                const auto ticks = std::max<int32_t>(1, static_cast<int32_t>(std::floor((c.maximum - c.minimum) / c.step + 1e-7)));
+                lv_slider_set_value(obj, std::clamp<int32_t>(static_cast<int32_t>(std::round((c.number - c.minimum) / c.step)), 0, ticks), LV_ANIM_OFF);
+                b->changed = false;
+            }
+        } else if (b->dropdown) {
+            uint32_t selected = 0;
+            for (size_t j = 0; c.known && j < c.options.size(); ++j) if (c.text == c.options[j].value) selected = j + 1;
+            lv_dropdown_set_selected(obj, selected);
+        } else if (c.kind == ControlKind::Rgb && changed) {
+            lv_obj_set_style_outline_width(obj, c.known && c.number == b->action.number ? 2 : 0, 0);
+            lv_obj_set_style_outline_color(obj, lv_color_hex(INK), 0);
+        }
+        b->control = c;
+    }
+}
+
+void HomePage::setDeviceLoadState(DeviceLoadState state) {
+    create(); load_state_seen_ = true; load_state_ = state; updateEmptyState();
+}
+void HomePage::updateEmptyState() {
+    if (!empty_panel_ || !load_state_seen_) return;
+    const bool visible = devices_.empty() && (view_ == View::House || view_ == View::Devices);
+    lv_obj_set_hidden(empty_panel_, !visible);
+    if (view_ == View::House && editor_.house().root()) lv_obj_set_hidden(editor_.house().root(), visible);
+    const bool waiting = load_state_ == DeviceLoadState::Starting || load_state_ == DeviceLoadState::Offline || load_state_ == DeviceLoadState::Loading;
+    lv_obj_set_hidden(empty_icon_, waiting);
+    if (empty_spinner_ && (!visible || !waiting)) { lv_obj_delete(empty_spinner_); empty_spinner_ = nullptr; }
+    if (!visible) { lv_label_set_text_fmt(count_, "Устройств: %u", static_cast<unsigned>(devices_.size())); return; }
+    lv_obj_move_foreground(empty_panel_); lv_obj_move_foreground(navigation_);
+    if (waiting && !empty_spinner_) {
+        empty_spinner_ = lv_spinner_create(empty_panel_); lv_obj_set_size(empty_spinner_, 62, 62);
+        lv_obj_align(empty_spinner_, LV_ALIGN_TOP_MID, 0, 28); lv_spinner_set_anim_params(empty_spinner_, 1100, 200);
+        lv_obj_set_style_arc_width(empty_spinner_, 4, LV_PART_MAIN); lv_obj_set_style_arc_width(empty_spinner_, 4, LV_PART_INDICATOR);
+        lv_obj_set_style_arc_color(empty_spinner_, lv_color_hex(0xEEEAF8), LV_PART_MAIN);
+        lv_obj_set_style_arc_color(empty_spinner_, lv_color_hex(ACCENT), LV_PART_INDICATOR);
+    }
+    const char *heading = "", *detail = "", *primary = "", *secondary = "";
+    switch (load_state_) {
+        case DeviceLoadState::Starting:
+            heading = "Подготавливаем ваш дом"; detail = "Проверяем сохранённые подключения. Скоро всё будет готово.";
+            primary = "Подключения"; secondary = "Открыть план"; break;
+        case DeviceLoadState::NoAccounts:
+            heading = "Добавьте ваш умный дом"; detail = "Подключите Яндекс или Home Assistant, чтобы увидеть устройства и управлять ими с панели.";
+            primary = "Подключить аккаунт"; secondary = "Создать план"; break;
+        case DeviceLoadState::Offline:
+            heading = "Ждём подключения к сети"; detail = "Подключите кабель или выберите Wi-Fi. Когда сеть появится, устройства загрузятся автоматически.";
+            primary = "Настроить сеть"; secondary = "Открыть план"; break;
+        case DeviceLoadState::Loading:
+            heading = "Загружаем устройства"; detail = "Получаем список из подключённых систем. Это может занять несколько секунд.";
+            primary = "Подключения"; secondary = "Открыть план"; break;
+        case DeviceLoadState::Ready:
+            heading = "Устройств пока нет"; detail = "Список получен, но он пуст. Добавьте устройства в своей системе умного дома, затем обновите панель.";
+            primary = "Обновить список"; secondary = "Подключения"; break;
+        case DeviceLoadState::Error:
+            heading = "Не удалось загрузить устройства"; detail = "Проверьте сеть и подключение аккаунта. Можно повторить попытку или открыть настройки подключений.";
+            primary = "Повторить"; secondary = "Подключения"; break;
+    }
+    lv_label_set_text(empty_title_, heading); lv_label_set_text(empty_text_, detail);
+    lv_label_set_text(lv_obj_get_child(empty_primary_, 0), primary); lv_label_set_text(lv_obj_get_child(empty_secondary_, 0), secondary);
+    lv_label_set_text(count_, load_state_ == DeviceLoadState::Ready ? "Устройств: 0" : waiting ? "Подключаемся..." : "");
+}
+void HomePage::emptyAction(bool primary) {
+    if (busy_) return;
+    if (primary && (load_state_ == DeviceLoadState::Ready || load_state_ == DeviceLoadState::Error)) {
+        DeviceAction action{}; action.kind = ActionValue::Refresh; submit(action, empty_primary_); return;
+    }
+    if (primary) navigate(load_state_ == DeviceLoadState::Offline ? View::Network : View::Connections);
+    else navigate(load_state_ == DeviceLoadState::Ready || load_state_ == DeviceLoadState::Error ? View::Connections : View::Plan);
 }

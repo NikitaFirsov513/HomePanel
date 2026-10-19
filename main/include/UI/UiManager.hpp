@@ -24,6 +24,7 @@ enum class UiMessageType : uint8_t
     AUTH_STATE,
     CONNECTION_STATE,
     NETWORK_STATE,
+    DEVICE_LOAD_STATE,
 };
 
 struct UiMessage
@@ -37,6 +38,7 @@ struct UiMessage
     AuthSnapshot auth;
     ConnectionSnapshot connection;
     NetworkSnapshot network;
+    DeviceLoadState device_load = DeviceLoadState::Starting;
 };
 static_assert(std::is_trivially_copyable<UiMessage>::value,
               "FreeRTOS queues require trivially copyable messages");
@@ -62,6 +64,7 @@ public:
     esp_err_t setConnectionState(const ConnectionSnapshot &snapshot, DeviceManager *devices);
     void setWifiHandler(NetworkView::Handler handler) { home_page_.setWifiHandler(handler); }
     esp_err_t setNetworkState(const NetworkSnapshot &snapshot);
+    esp_err_t setDeviceLoadState(DeviceLoadState state);
     esp_err_t setControlResult(DeviceManager *devices, const char *text, bool error, bool finished = true);
 
 private:

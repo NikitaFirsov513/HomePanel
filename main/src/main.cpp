@@ -42,7 +42,7 @@ static bool network_ready()
 static bool enqueue_action(const DeviceAction &action)
 {
     // Called by LVGL: no HTTP, waiting, or model mutexes on the display thread.
-    if (!action_queue || !network_ready() || !auth_ready.load() ||
+    if (!action_queue || !network_ready() || (action.kind != ActionValue::Refresh && !auth_ready.load()) ||
         xQueueSend(action_queue, &action, 0) != pdTRUE) return false;
     if (auto task = sync_task_handle.load()) xTaskNotifyGive(task);
     return true;
@@ -240,10 +240,23 @@ static void device_sync_task(void *)
     uint64_t next_yandex = 0, next_ha = 0;
     AuthSnapshot previous;
     NetworkSnapshot previous_network;
+    bool yandex_loaded = false, ha_loaded = false, yandex_failed = false, ha_failed = false;
+    bool load_published = false; DeviceLoadState previous_load = DeviceLoadState::Starting;
     while (true) {
         const auto now = static_cast<uint64_t>(esp_timer_get_time() / 1000000);
         const auto network_state = network.snapshot();
         const bool online = network_state.active != NetworkPath::None;
+        auto publish_load = [&](bool in_flight = false) {
+            const bool configured = auth.authorized() || connection.configured;
+            const bool loaded = (!auth.authorized() || yandex_loaded) && (!connection.configured || ha_loaded);
+            const bool failed = (auth.authorized() && yandex_failed) || (connection.configured && ha_failed);
+            const auto state = deviceLoadState(true, configured, online, in_flight, loaded, failed);
+            if (!load_published || state != previous_load) {
+                if (ui_manager.setDeviceLoadState(state) == ESP_OK) { previous_load = state; load_published = true; }
+            }
+        };
+        publish_load();
+
         if (network_state.active != previous_network.active ||
             std::strcmp(network_state.ethernet_ip, previous_network.ethernet_ip) ||
             std::strcmp(network_state.wifi_ip, previous_network.wifi_ip)) next_yandex = next_ha = 0;
@@ -277,6 +290,7 @@ static void device_sync_task(void *)
             else if (!saveHomeAssistantConfig(updated)) snprintf(connection.message, sizeof(connection.message), "Не удалось сохранить настройки Home Assistant");
             else {
                 ha = std::move(updated); connection = {};
+                ha_loaded = ha_failed = false;
                 connection.configured = !ha.address.empty();
                 snprintf(connection.address, sizeof(connection.address), "%s", ha.address.c_str());
                 snprintf(connection.message, sizeof(connection.message), "%s", connection.configured ? "Проверяем подключение..." : "Home Assistant отключён");
@@ -285,10 +299,13 @@ static void device_sync_task(void *)
             // Clear the worker's queue copy as soon as settings have been processed.
             settings = {}; connection_published = false;
         }
+        publish_load();
         auth.tick(now, online);
         const bool token_ok = online && auth.ensureToken(now);
+        if (online && auth.authorized() && !token_ok) yandex_failed = true;
         if (was_authorized && !auth.authorized()) {
             device_manager.clearSource(DeviceSource::Yandex); changed = true; next_yandex = 0;
+            yandex_loaded = yandex_failed = false;
         }
         was_authorized = auth.authorized();
         auth_ready.store(online && (token_ok || connection.configured));
@@ -316,10 +333,12 @@ static void device_sync_task(void *)
             }
         }
         if (online && auth.authorized() && token_ok && (request_yandex || now >= next_yandex)) {
+            publish_load(!yandex_loaded || (received && action.kind == ActionValue::Refresh));
             std::string message; int http_status = 0;
             bool refreshed = refresh_devices(auth.accessToken(), message, http_status);
             if (!refreshed && http_status == 401 && auth.ensureToken(now, true))
                 refreshed = refresh_devices(auth.accessToken(), message, http_status);
+            yandex_failed = !refreshed; yandex_loaded |= refreshed;
             changed |= refreshed;
             if (!refreshed) {
                 if (http_status == 401 || http_status == 403) { device_manager.clearSource(DeviceSource::Yandex); changed = true; }
@@ -331,7 +350,9 @@ static void device_sync_task(void *)
             result_message += ". Яндекс недоступен"; result_error = true;
         }
         if (online && connection.configured && (request_ha || now >= next_ha)) {
+            publish_load(!ha_loaded || (received && action.kind == ActionValue::Refresh));
             const bool refreshed = refresh_home_assistant(ha, connection);
+            ha_failed = !refreshed; ha_loaded |= refreshed;
             if (!refreshed) device_manager.clearSource(DeviceSource::HomeAssistant);
             changed = true;
             if (!refreshed && request_ha) { result_message += ". " + std::string(connection.message); result_error = true; }
@@ -341,6 +362,7 @@ static void device_sync_task(void *)
         if (was_online != online) {
             next_yandex = next_ha = 0;
             if (!online) {
+                yandex_loaded = ha_loaded = yandex_failed = ha_failed = false;
                 device_manager.clearSource(DeviceSource::HomeAssistant);
                 device_manager.clearSource(DeviceSource::Yandex);
                 connection.connected = false; connection.devices = 0;
@@ -366,6 +388,7 @@ static void device_sync_task(void *)
             if (!received && result_message.empty()) result_message = !online ? "Нет сети. Ожидание сети..." : "Состояния устройств обновлены";
             ui_manager.setControlResult(&device_manager, result_message.c_str(), result_error || !online, received);
         }
+        publish_load();
         ulTaskNotifyTake(pdTRUE, pdMS_TO_TICKS(1000));
     }
 }
