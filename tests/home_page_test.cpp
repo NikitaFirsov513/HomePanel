@@ -791,6 +791,52 @@ int main()
         CHECK(editor.plan().document().openings.size()==1);checkGlyphs(editor.root());snapshot(display,"wide-window-editor.ppm");
         page.navigate(HomePage::View::House);snapshot(display,"wide-window-house.ppm");
     }
+    {
+        for(bool hsv:{false,true}) {
+            HomePage page;page.setActionHandler(send);AuthSnapshot auth;auth.authorized=true;auth.state=AuthState::Authorized;page.updateAuth(auth);
+            Device light;light.id="color-picker";light.name="Цветная лампа";light.type="devices.types.light";
+            DeviceControl c;c.kind=hsv?ControlKind::Hsv:ControlKind::Rgb;c.type="devices.capabilities.color_setting";c.instance=hsv?"hsv":"rgb";
+            c.maximum=16777215;c.known=true;c.number=hsv?210:0x336699;c.saturation=35;c.value=70;light.controls={c};
+            page.update({light});page.navigate(HomePage::View::Devices);lv_screen_load(page.root());
+            auto *card=textButton(page.root(),light.name.c_str());CHECK(card);lv_obj_send_event(card,LV_EVENT_CLICKED,nullptr);
+            auto *apply=textButton(page.root(),"Применить цвет");CHECK(apply);auto *panel=lv_obj_get_parent(apply);
+            std::vector<lv_obj_t *> sliders;auto collect=[&](auto &&self,lv_obj_t *obj)->void {
+                if(lv_obj_check_type(obj,&lv_slider_class))sliders.push_back(obj);
+                for(uint32_t i=0;i<lv_obj_get_child_count(obj);++i)self(self,lv_obj_get_child(obj,i));
+            };collect(collect,panel);
+            CHECK(sliders.size()==3);const auto before=calls;
+            lv_slider_set_value(sliders[0],180,LV_ANIM_OFF);lv_slider_set_value(sliders[1],40,LV_ANIM_OFF);lv_slider_set_value(sliders[2],65,LV_ANIM_OFF);
+            for(auto *slider:sliders)lv_obj_send_event(slider,LV_EVENT_VALUE_CHANGED,nullptr);
+            CHECK(calls==before);page.update({light});CHECK(lv_slider_get_value(sliders[0])==180);
+            lv_obj_send_event(apply,LV_EVENT_CLICKED,nullptr);CHECK(calls==before+1 && page.busy() && find(apply,&lv_spinner_class));
+            if(hsv)CHECK(last.kind==ActionValue::Hsv && last.number==180 && last.saturation==40 && last.value==65);
+            else CHECK(last.kind==ActionValue::Number && last.number==(lv_color_to_u32(lv_color_hsv_to_rgb(180,40,65))&0xFFFFFF));
+            page.setStatus("Цвет изменён",false);page.update({light});CHECK(textButton(page.root(),"Применить цвет")==apply);
+            lv_obj_update_layout(page.root());lv_obj_scroll_to_view_recursive(apply,LV_ANIM_OFF);checkGlyphs(page.root());snapshot(display,hsv?"color-picker-hsv.ppm":"color-picker-rgb.ppm");
+            // All picker children, including the HEX label, must fit horizontally.
+            lv_area_t bounds;lv_obj_get_coords(panel,&bounds);
+            auto checkBounds=[&](auto &&self,lv_obj_t *obj)->void {
+                lv_area_t area;lv_obj_get_coords(obj,&area);
+                CHECK(area.x1>=bounds.x1 && area.x2<=bounds.x2);
+                for(uint32_t i=0;i<lv_obj_get_child_count(obj);++i)self(self,lv_obj_get_child(obj,i));
+            };checkBounds(checkBounds,panel);
+            // The rainbow must remain behind the white thumb at the selected hue.
+            lv_area_t hue_area;lv_obj_get_coords(sliders[0],&hue_area);
+            const int knob_x=(hue_area.x1+hue_area.x2)/2,knob_y=(hue_area.y1+hue_area.y2)/2;
+            const auto pixel=(knob_y*1024+knob_x)*3;
+            CHECK(pixels[pixel]>240 && pixels[pixel+1]>240 && pixels[pixel+2]>240);
+            for(auto *slider:sliders) {
+                lv_area_t track,row;lv_obj_get_coords(slider,&track);lv_obj_get_coords(lv_obj_get_parent(slider),&row);
+                CHECK(track.x1-16>=row.x1 && track.x2+16<=row.x2);
+                CHECK(track.y1-9>=row.y1 && track.y2+9<=row.y2);
+            }
+            for(int end:{0,360}) {
+                lv_slider_set_value(sliders[0],end,LV_ANIM_OFF);lv_obj_send_event(sliders[0],LV_EVENT_VALUE_CHANGED,nullptr);
+                snapshot(display,end?"color-picker-end.ppm":"color-picker-start.ppm");checkBounds(checkBounds,panel);
+            }
+
+        }
+    }
     lv_display_delete(display);
     lv_deinit();
     puts("HomePage interaction tests passed");

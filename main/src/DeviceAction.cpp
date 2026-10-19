@@ -47,11 +47,13 @@ esp_err_t buildDeviceAction(const Device &device, const DeviceAction &action, st
             return ESP_ERR_INVALID_ARG;
         value = cJSON_CreateNumber(action.number);
     } else if (c.kind == ControlKind::Hsv && action.kind == ActionValue::Hsv &&
-               !action.relative && std::isfinite(action.number) && action.number >= 0 && action.number <= 360) {
+               !action.relative && std::isfinite(action.number) && action.number >= 0 && action.number <= 360 &&
+               std::isfinite(action.saturation) && action.saturation>=0 && action.saturation<=100 &&
+               std::isfinite(action.value) && action.value>=0 && action.value<=100) {
         value = cJSON_CreateObject();
         if (value && (!cJSON_AddNumberToObject(value, "h", action.number) ||
-                      !cJSON_AddNumberToObject(value, "s", 100) ||
-                      !cJSON_AddNumberToObject(value, "v", 100))) {
+                      !cJSON_AddNumberToObject(value, "s", action.saturation) ||
+                      !cJSON_AddNumberToObject(value, "v", action.value))) {
             cJSON_Delete(value);
             return ESP_ERR_NO_MEM;
         }

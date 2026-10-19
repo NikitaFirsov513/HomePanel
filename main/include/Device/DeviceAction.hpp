@@ -14,6 +14,7 @@ struct DeviceAction {
     char text[128]{};
     ActionValue kind = ActionValue::Boolean;
     double number = 0;
+    double saturation = 100, value = 100;
     bool boolean = false;
     bool relative = false;
 };

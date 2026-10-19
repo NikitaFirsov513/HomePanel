@@ -22,6 +22,7 @@ struct DeviceControl {
     bool boolean = false;
     bool relative_only = false;
     double number = 0;
+    double saturation = 100, value = 100;
     double minimum = 0;
     double maximum = 100;
     double step = 1;

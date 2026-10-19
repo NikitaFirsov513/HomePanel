@@ -80,7 +80,7 @@ bool sameLayout(const Device &a, const Device &b) {
     return true;
 }
 bool sameValues(const DeviceControl &a, const DeviceControl &b) {
-    return a.known == b.known && a.boolean == b.boolean && a.number == b.number && a.text == b.text;
+    return a.known == b.known && a.boolean == b.boolean && a.number == b.number && a.text == b.text && a.saturation == b.saturation && a.value == b.value;
 }
 bool powered(const Device &device) {
     for (const auto &c : device.controls) if (c.instance == "on" && c.kind == ControlKind::Toggle) return c.known && c.boolean;
@@ -115,6 +115,32 @@ struct HomePage::Binding {
     bool dropdown = false;
     bool changed = false;
     bool expand = false;
+    bool color_picker = false, color_dirty = false;
+    lv_obj_t *hue = nullptr, *saturation = nullptr, *value = nullptr, *preview = nullptr;
+    lv_obj_t *color_labels[3]{};
+    void previewColor() {
+        const int h=lv_slider_get_value(hue),s=lv_slider_get_value(saturation),v=lv_slider_get_value(value);
+        const auto rgb=lv_color_hsv_to_rgb(h,s,v);
+        lv_obj_set_style_bg_color(preview,rgb,0);
+        lv_label_set_text_fmt(caption,"#%06X",unsigned(lv_color_to_u32(rgb)&0xFFFFFF));
+        lv_label_set_text_fmt(color_labels[0],"Оттенок: %d",h);
+        lv_label_set_text_fmt(color_labels[1],"Насыщенность: %d%%",s);
+        lv_label_set_text_fmt(color_labels[2],"Яркость: %d%%",v);
+        const auto pure=lv_color_hsv_to_rgb(h,100,100);
+        lv_obj_set_style_bg_color(saturation,lv_color_hex(0xFFFFFF),LV_PART_MAIN);
+        lv_obj_set_style_bg_grad_color(saturation,pure,LV_PART_MAIN);
+        lv_obj_set_style_bg_color(value,lv_color_hex(0),LV_PART_MAIN);
+        lv_obj_set_style_bg_grad_color(value,lv_color_hsv_to_rgb(h,s,100),LV_PART_MAIN);
+    }
+    void setColor(const DeviceControl &c) {
+        int h=0,s=100,v=100;
+        if(c.known && c.kind==ControlKind::Hsv) {h=int(c.number);s=int(c.saturation);v=int(c.value);}
+        else if(c.known) {
+            const auto rgb=static_cast<uint32_t>(c.number);
+            const auto hsv=lv_color_rgb_to_hsv((rgb>>16)&255,(rgb>>8)&255,rgb&255);h=hsv.h;s=hsv.s;v=hsv.v;
+        }
+        lv_slider_set_value(hue,h,LV_ANIM_OFF);lv_slider_set_value(saturation,s,LV_ANIM_OFF);lv_slider_set_value(value,v,LV_ANIM_OFF);previewColor();
+    }
 };
 
 void HomePage::bind(lv_obj_t *widget, Binding *binding, lv_event_code_t code)
@@ -170,6 +196,12 @@ void HomePage::controlEvent(lv_event_t *event)
     if (b->page->busy_ || !b->page->authorized_) return;
     if (b->expand) { b->page->toggleDevice(b->action.device_id); return; }
     auto *obj = static_cast<lv_obj_t *>(lv_event_get_target(event));
+    if(b->color_picker) {
+        b->action.kind=b->control.kind==ControlKind::Rgb?ActionValue::Number:ActionValue::Hsv;
+        const int h=lv_slider_get_value(b->hue),s=lv_slider_get_value(b->saturation),v=lv_slider_get_value(b->value);
+        b->action.number=b->control.kind==ControlKind::Rgb?(lv_color_to_u32(lv_color_hsv_to_rgb(h,s,v))&0xFFFFFF):h;
+        b->action.saturation=s;b->action.value=v;b->color_dirty=false;
+    }
     if (b->slider) {
         const double value = b->control.minimum + lv_slider_get_value(obj) * b->control.step;
         lv_label_set_text_fmt(b->caption, "%s: %g", title(b->control.instance), value);
@@ -323,8 +355,11 @@ void HomePage::create()
     details_ = lv_obj_create(panel);
     surface(details_, 0xFFFFFF, 0);
     lv_obj_set_width(details_, LV_PCT(100));
+    lv_obj_set_height(details_, 0);
     lv_obj_set_flex_grow(details_, 1);
-    lv_obj_set_style_pad_right(details_, 10, 0);
+    lv_obj_set_style_pad_left(details_, 4, 0);
+    lv_obj_set_style_pad_right(details_, 14, 0);
+    lv_obj_set_style_pad_bottom(details_, 12, 0);
     lv_obj_set_style_pad_row(details_, 16, 0);
     lv_obj_set_flex_flow(details_, LV_FLEX_FLOW_COLUMN);
     lv_obj_set_scrollable(details_, true);
@@ -651,7 +686,7 @@ void HomePage::createControls(const Device &device, lv_obj_t *body)
                 const char *text = c.instance == "pause" ? (on ? "Пауза" : "Продолжить") :
                     vacuum ? (on ? "Начать уборку" : "Остановить") : (on ? "Включить" : "Выключить");
                 auto *obj = button(row, text);
-                lv_obj_set_flex_grow(obj, 1);
+                lv_obj_set_width(obj,0);lv_obj_set_flex_grow(obj, 1);
                 if (c.known && c.boolean == bool(on)) {
                     lv_obj_set_style_bg_color(obj, lv_color_hex(0xD9EFE5), 0);
                     lv_obj_set_style_text_color(obj, lv_color_hex(0x2D8669), 0);
@@ -676,14 +711,22 @@ void HomePage::createControls(const Device &device, lv_obj_t *body)
                     bind(obj, b, LV_EVENT_CLICKED);
                 }
             } else {
-                auto *obj = lv_slider_create(body);
-                lv_obj_set_width(obj, LV_PCT(94));
-                lv_obj_set_style_margin_all(obj, 10, 0);
+                auto *track_row=lv_obj_create(body);surface(track_row,0xFFFFFF,0);
+                lv_obj_set_size(track_row,LV_PCT(100),44);lv_obj_set_style_pad_hor(track_row,18,0);
+                auto *obj = lv_slider_create(track_row);
+                lv_obj_set_width(obj, LV_PCT(100));lv_obj_center(obj);
                 lv_obj_set_height(obj, 8);
                 lv_obj_set_style_bg_color(obj, lv_color_hex(0xEAE7F5), LV_PART_MAIN);
                 lv_obj_set_style_bg_color(obj, lv_color_hex(ACCENT), LV_PART_INDICATOR);
                 lv_obj_set_style_bg_color(obj, lv_color_hex(ACCENT), LV_PART_KNOB);
                 lv_obj_set_style_pad_all(obj, 5, LV_PART_KNOB);
+                if(c.instance=="temperature_k") {
+                    lv_obj_set_height(obj,14);
+                    lv_obj_set_style_bg_color(obj,lv_color_hex(0xFFB75E),LV_PART_MAIN);
+                    lv_obj_set_style_bg_grad_color(obj,lv_color_hex(0xBBD9FF),LV_PART_MAIN);
+                    lv_obj_set_style_bg_grad_dir(obj,LV_GRAD_DIR_HOR,LV_PART_MAIN);
+                    lv_obj_set_style_bg_opa(obj,LV_OPA_TRANSP,LV_PART_INDICATOR);
+                }
                 const auto ticks = static_cast<int32_t>(std::floor((c.maximum - c.minimum) / c.step + 1e-7));
                 lv_slider_set_range(obj, 0, std::max<int32_t>(1, ticks));
                 lv_slider_set_value(obj, std::clamp<int32_t>(static_cast<int32_t>(std::round((c.number - c.minimum) / c.step)), 0, ticks), LV_ANIM_OFF);
@@ -715,6 +758,53 @@ void HomePage::createControls(const Device &device, lv_obj_t *body)
                 b->action.number = c.kind == ControlKind::Rgb ? colors[i] : hues[i];
                 bind(swatch, b, LV_EVENT_CLICKED);
             }
+            auto *panel=lv_obj_create(body);surface(panel,0xF5F4FA,14);
+            lv_obj_set_size(panel,LV_PCT(100),LV_SIZE_CONTENT);lv_obj_set_style_pad_all(panel,16,0);
+            lv_obj_set_style_pad_row(panel,8,0);lv_obj_set_flex_flow(panel,LV_FLEX_FLOW_COLUMN);
+            auto *b=make();b->color_picker=true;
+            auto *preview_row=lv_obj_create(panel);surface(preview_row,0xF5F4FA,0);
+            lv_obj_set_size(preview_row,LV_PCT(100),48);lv_obj_set_flex_flow(preview_row,LV_FLEX_FLOW_ROW);lv_obj_set_style_pad_column(preview_row,14,0);
+            b->preview=lv_obj_create(preview_row);surface(b->preview,0xFF0000,12);lv_obj_set_size(b->preview,64,44);
+            b->caption=label(preview_row,"");lv_obj_set_width(b->caption,0);lv_obj_set_flex_grow(b->caption,1);lv_obj_set_style_pad_top(b->caption,10,0);
+            lv_obj_t **sliders[]={&b->hue,&b->saturation,&b->value};
+            for(int i=0;i<3;++i) {
+                auto *color_row=lv_obj_create(panel);surface(color_row,0xF5F4FA,0);
+                lv_obj_set_size(color_row,LV_PCT(100),52);lv_obj_set_flex_flow(color_row,LV_FLEX_FLOW_ROW);
+                lv_obj_set_style_pad_right(color_row,22,0);lv_obj_set_style_pad_column(color_row,20,0);
+                lv_obj_set_flex_align(color_row,LV_FLEX_ALIGN_START,LV_FLEX_ALIGN_CENTER,LV_FLEX_ALIGN_CENTER);
+                b->color_labels[i]=label(color_row,"");lv_obj_set_width(b->color_labels[i],LV_PCT(44));
+                auto *track=lv_slider_create(color_row);*sliders[i]=track;
+                lv_obj_set_size(track,0,14);lv_obj_set_flex_grow(track,1);
+                lv_slider_set_range(track,0,i==0?360:100);
+                lv_obj_set_style_bg_color(track,lv_color_hex(0xDDD9EA),LV_PART_MAIN);
+                lv_obj_set_style_bg_opa(track,LV_OPA_COVER,LV_PART_MAIN);
+                lv_obj_set_style_bg_color(track,lv_color_hex(ACCENT),LV_PART_INDICATOR);
+                lv_obj_set_style_bg_color(track,lv_color_hex(0xFFFFFF),LV_PART_KNOB);
+                lv_obj_set_style_bg_opa(track,LV_OPA_COVER,LV_PART_KNOB);
+                lv_obj_set_style_border_color(track,lv_color_hex(ACCENT),LV_PART_KNOB);lv_obj_set_style_border_width(track,2,LV_PART_KNOB);
+                lv_obj_set_style_pad_all(track,9,LV_PART_KNOB);
+                lv_obj_set_style_bg_opa(track,LV_OPA_TRANSP,LV_PART_INDICATOR);
+                lv_obj_set_style_bg_grad_dir(track,LV_GRAD_DIR_HOR,LV_PART_MAIN);
+                if(i==0) {
+                    // Paint the rainbow before LVGL paints the thumb, not over it.
+                    lv_obj_set_style_bg_opa(track,LV_OPA_TRANSP,LV_PART_MAIN);
+                    lv_obj_add_event_cb(track,[](lv_event_t *e){
+                    auto *obj=static_cast<lv_obj_t *>(lv_event_get_target(e));lv_area_t area;lv_obj_get_coords(obj,&area);
+                    const int width=lv_area_get_width(&area);
+                    for(int k=0;k<6;++k) {
+                        lv_draw_rect_dsc_t d;lv_draw_rect_dsc_init(&d);
+                        d.bg_color=lv_color_hsv_to_rgb(k*60,100,100);d.bg_grad.stops_count=2;d.bg_grad.dir=LV_GRAD_DIR_HOR;
+                        d.bg_grad.stops[0]={d.bg_color,LV_OPA_COVER,0};d.bg_grad.stops[1]={lv_color_hsv_to_rgb((k+1)*60,100,100),LV_OPA_COVER,255};
+                        lv_area_t part={area.x1+width*k/6,area.y1,area.x1+width*(k+1)/6-1,area.y2};lv_draw_rect(lv_event_get_layer(e),&d,&part);
+                    }
+                },LV_EVENT_DRAW_MAIN_BEGIN,nullptr);
+                }
+                lv_obj_add_event_cb(track,[](lv_event_t *e){auto *binding=static_cast<Binding *>(lv_event_get_user_data(e));
+                    if(binding->page->busy_ || !binding->page->authorized_) return;
+                    binding->color_dirty=true;binding->previewColor();},LV_EVENT_VALUE_CHANGED,b);
+            }
+            auto *apply=button(panel,"Применить цвет");lv_obj_set_width(apply,LV_PCT(100));bind(apply,b,LV_EVENT_CLICKED);b->setColor(c);
+
         } else {
             label(body, title(c.instance));
             auto *obj = lv_dropdown_create(body);
@@ -779,7 +869,9 @@ void HomePage::updateControls(const Device &device) {
         if (it == device.controls.end()) continue;
         const auto &c = *it;
         const bool changed = !sameValues(c, b->control);
-        if (c.kind == ControlKind::Toggle && changed) {
+        if(b->color_picker) {
+            if(changed && !b->color_dirty) b->setColor(c);
+        } else if (c.kind == ControlKind::Toggle && changed) {
             if (b->caption) lv_label_set_text_fmt(b->caption, "%s: %s", title(c.instance), c.known ? c.boolean ? "Вкл." : "Выкл." : "неизвестно");
             const bool selected = c.known && c.boolean == b->action.boolean;
             lv_obj_set_style_bg_color(obj, lv_color_hex(selected ? 0xD9EFE5 : 0xF0EDF9), 0);
@@ -798,8 +890,8 @@ void HomePage::updateControls(const Device &device) {
             uint32_t selected = 0;
             for (size_t j = 0; c.known && j < c.options.size(); ++j) if (c.text == c.options[j].value) selected = j + 1;
             lv_dropdown_set_selected(obj, selected);
-        } else if (c.kind == ControlKind::Rgb && changed) {
-            lv_obj_set_style_outline_width(obj, c.known && c.number == b->action.number ? 2 : 0, 0);
+        } else if ((c.kind == ControlKind::Rgb || c.kind == ControlKind::Hsv) && changed) {
+            lv_obj_set_style_outline_width(obj, c.known && c.number == b->action.number && (c.kind==ControlKind::Rgb || (c.saturation==100 && c.value==100)) ? 2 : 0, 0);
             lv_obj_set_style_outline_color(obj, lv_color_hex(INK), 0);
         }
         b->control = c;

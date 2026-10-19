@@ -145,6 +145,15 @@ bool parseHomeAssistantStates(const char *json, size_t length, std::vector<Devic
             bool color = false; for (auto m : {"hs", "xy", "rgb", "rgbw", "rgbww"}) color |= has(attrs, "supported_color_modes", m);
             if (color) {
                 DeviceControl c; c.type = "ha.rgb"; c.instance = "rgb"; c.kind = ControlKind::Rgb; c.maximum = 16777215;
+                const auto *rgb=cJSON_GetObjectItemCaseSensitive(attrs,"rgb_color");
+                if(cJSON_IsArray(rgb) && cJSON_GetArraySize(rgb)==3) {
+                    unsigned packed=0;bool valid=true;
+                    for(int i=0;i<3;++i) {const auto *part=cJSON_GetArrayItem(rgb,i);
+                        if(!cJSON_IsNumber(part)||!std::isfinite(part->valuedouble)||part->valuedouble<0||part->valuedouble>255) {valid=false;break;}
+                        packed=(packed<<8)|unsigned(part->valuedouble);
+                    }
+                    c.known=valid;if(valid)c.number=packed;
+                }
                 d.controls.push_back(c);
             }
         }

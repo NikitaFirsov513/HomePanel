@@ -67,6 +67,14 @@ void parseControls(Device &device, const cJSON *item)
                 c.maximum = 16777215;
                 c.known = state_instance == model && (cJSON_IsNumber(value) || cJSON_IsObject(value));
                 c.number = cJSON_IsNumber(value) ? value->valuedouble : 0;
+                if(model=="hsv" && c.known) {
+                    const auto *h=cJSON_GetObjectItemCaseSensitive(value,"h"),*s=cJSON_GetObjectItemCaseSensitive(value,"s"),*v=cJSON_GetObjectItemCaseSensitive(value,"v");
+                    c.known=cJSON_IsNumber(h)&&cJSON_IsNumber(s)&&cJSON_IsNumber(v) &&
+                        std::isfinite(h->valuedouble)&&h->valuedouble>=0&&h->valuedouble<=360 &&
+                        std::isfinite(s->valuedouble)&&s->valuedouble>=0&&s->valuedouble<=100 &&
+                        std::isfinite(v->valuedouble)&&v->valuedouble>=0&&v->valuedouble<=100;
+                    if(c.known) {c.number=h->valuedouble;c.saturation=s->valuedouble;c.value=v->valuedouble;}
+                }
                 device.controls.push_back(c);
             }
             const auto *temp = cJSON_GetObjectItemCaseSensitive(p, "temperature_k");

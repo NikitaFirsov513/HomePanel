@@ -82,6 +82,24 @@ int main()
         strcpy(action.instance, "unsupported");
         CHECK(buildDeviceAction(*device, action, body) == ESP_ERR_NOT_SUPPORTED);
     }
+    {
+        DeviceManager manager;
+        CHECK(load(manager,R"({"devices":[{"id":"hsv","name":"Color","type":"light","capabilities":[{"type":"devices.capabilities.color_setting","parameters":{"color_model":"hsv"},"state":{"instance":"hsv","value":{"h":210,"s":35,"v":70}}}]}]})")==ESP_OK);
+        const auto device=manager.getDeviceById("hsv");CHECK(device && device->controls.size()==1);
+        const auto &c=device->controls[0];CHECK(c.known && c.number==210 && c.saturation==35 && c.value==70);
+        DeviceAction action{};strcpy(action.device_id,"hsv");strcpy(action.type,c.type.c_str());strcpy(action.instance,"hsv");
+        action.kind=ActionValue::Hsv;action.number=180;action.saturation=40;action.value=65;
+        std::string body;CHECK(buildDeviceAction(*device,action,body)==ESP_OK);
+        auto *root=cJSON_Parse(body.c_str());CHECK(root);
+        auto *entry=cJSON_GetArrayItem(cJSON_GetObjectItemCaseSensitive(root,"devices"),0);
+        auto *cap=cJSON_GetArrayItem(cJSON_GetObjectItemCaseSensitive(entry,"actions"),0);
+        auto *value=cJSON_GetObjectItemCaseSensitive(cJSON_GetObjectItemCaseSensitive(cap,"state"),"value");
+        CHECK(cJSON_GetObjectItemCaseSensitive(value,"h")->valuedouble==180);
+        CHECK(cJSON_GetObjectItemCaseSensitive(value,"s")->valuedouble==40);
+        CHECK(cJSON_GetObjectItemCaseSensitive(value,"v")->valuedouble==65);cJSON_Delete(root);
+        action.saturation=101;CHECK(buildDeviceAction(*device,action,body)==ESP_ERR_INVALID_ARG);
+        action.saturation=40;action.value=-1;CHECK(buildDeviceAction(*device,action,body)==ESP_ERR_INVALID_ARG);
+    }
     static_assert(!std::is_copy_constructible<DeviceManager>::value);
     {
         DeviceManager manager;
